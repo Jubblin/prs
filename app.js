@@ -1,5 +1,6 @@
 const API = 'https://api.github.com';
 const TOKEN_KEY = 'gh_dashboard_token';
+const REPO_KEY = 'gh_dashboard_repo';
 
 const TABS = [
   { id: 'authored', label: 'My PRs', pr: true, queries: ['is:pr is:open author:@me'] },
@@ -9,7 +10,7 @@ const TABS = [
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
 ];
 
-const state = { token: null, tab: 'authored', data: {}, selected: null, status: new Map() };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: 'authored', data: {}, selected: null, status: new Map() };
 const $ = (id) => document.getElementById(id);
 
 // DOM helper: all text goes through textContent / text nodes, never innerHTML.
@@ -103,7 +104,11 @@ $('loginform').addEventListener('submit', async (e) => {
 $('signout').addEventListener('click', signOut);
 $('refresh').addEventListener('click', refresh);
 $('textfilter').addEventListener('input', renderList);
-$('repofilter').addEventListener('change', renderList);
+$('repofilter').addEventListener('change', () => {
+  state.repo = $('repofilter').value;
+  if (state.repo) localStorage.setItem(REPO_KEY, state.repo); else localStorage.removeItem(REPO_KEY);
+  renderList();
+});
 
 // ---- lists ----
 async function loadTab(tab) {
@@ -138,11 +143,11 @@ function renderTabs() {
 }
 
 function renderRepos() {
-  const sel = $('repofilter'), cur = sel.value;
+  const sel = $('repofilter');
   const repos = [...new Set((state.data[state.tab] || []).map(repoOf))].sort();
   clear(sel);
   sel.append(h('option', { value: '' }, 'All repos'), ...repos.map((r) => h('option', { value: r }, r)));
-  sel.value = repos.includes(cur) ? cur : '';
+  sel.value = repos.includes(state.repo) ? state.repo : '';
 }
 
 function renderList() {
