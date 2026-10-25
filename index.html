@@ -12,7 +12,16 @@
     <h1>PR Dashboard</h1>
     <div id="userbox" hidden>
       <span id="username"></span>
+      <span id="lastupdated" class="meta" aria-live="off"></span>
       <button id="refresh" type="button">Refresh</button>
+      <label class="meta" for="autorefresh">Auto
+        <select id="autorefresh">
+          <option value="0">Off</option>
+          <option value="2">2 min</option>
+          <option value="5">5 min</option>
+          <option value="10">10 min</option>
+        </select>
+      </label>
       <button id="signout" type="button">Sign out</button>
     </div>
   </header>

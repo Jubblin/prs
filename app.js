@@ -2,6 +2,8 @@ const API = 'https://api.github.com';
 const TOKEN_KEY = 'gh_dashboard_token';
 const REPO_KEY = 'gh_dashboard_repo';
 const TAB_KEY = 'gh_dashboard_tab';
+const AUTO_KEY = 'gh_dashboard_autorefresh';
+const AUTO_CHOICES = [0, 2, 5, 10]; // minutes; 0 = off
 
 const TABS = [
   { id: 'authored', label: 'My PRs', pr: true, queries: ['is:pr is:open author:@me'] },
@@ -11,7 +13,11 @@ const TABS = [
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
 ];
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, status: new Map() };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+function loadAuto() {
+  const v = localStorage.getItem(AUTO_KEY);
+  return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
+}
 const $ = (id) => document.getElementById(id);
 
 // DOM helper: all text goes through textContent / text nodes, never innerHTML.
@@ -60,6 +66,7 @@ async function gh(path, opts = {}) {
   }
   if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
+    state.rateLimitUntil = reset || Date.now() + 60000;
     throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.');
   }
   throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`);
@@ -80,8 +87,8 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.data = {}; state.selected = null; state.status.clear();
-  showView();
+  state.token = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
   const on = !!state.token;
@@ -103,7 +110,7 @@ $('loginform').addEventListener('submit', async (e) => {
   }
 });
 $('signout').addEventListener('click', signOut);
-$('refresh').addEventListener('click', refresh);
+$('refresh').addEventListener('click', () => refresh());
 $('textfilter').addEventListener('input', renderList);
 $('repofilter').addEventListener('change', () => {
   state.repo = $('repofilter').value;
@@ -121,17 +128,54 @@ async function loadTab(tab) {
   return [...seen.values()].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 }
 
-async function refresh() {
-  banner('');
-  state.status.clear();
+// auto = true for timer-driven refreshes: keep old data/statuses on failure and keep scroll positions (no flicker).
+async function refresh(auto = false) {
+  if (!state.token) return;
+  if (auto === true && state.refreshing) return;
+  if (auto !== true) { banner(''); state.status.clear(); }
+  state.refreshing = true;
   $('refresh').disabled = true;
+  const token = state.token;
+  let results;
   try {
-    const results = await Promise.all(TABS.map((t) => loadTab(t).catch((e) => { banner(e.message); return []; })));
-    TABS.forEach((t, i) => { state.data[t.id] = results[i]; });
-  } finally { $('refresh').disabled = false; }
-  renderTabs(); renderRepos(); renderList();
+    results = await Promise.all(TABS.map((t) => loadTab(t).catch((e) => { banner(e.message); return auto === true ? null : []; })));
+  } finally { $('refresh').disabled = false; state.refreshing = false; }
+  if (state.token !== token) return; // signed out meanwhile
+  TABS.forEach((t, i) => { if (results[i]) state.data[t.id] = results[i]; });
+  state.lastAttempt = Date.now();
+  if (results.some(Boolean)) state.lastUpdated = state.lastAttempt;
+  const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
+  renderTabs(); renderRepos(); renderList(); renderUpdated();
+  window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
+  scheduleAuto();
   loadPrStatuses();
 }
+
+// ---- auto refresh ----
+const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+function renderUpdated() { $('lastupdated').textContent = state.lastUpdated ? 'Last updated ' + fmtTime(state.lastUpdated) : ''; }
+const autoBlocked = () => state.refreshing || state.busy > 0 || Date.now() < state.rateLimitUntil;
+function scheduleAuto() {
+  clearTimeout(state.timer); state.timer = null;
+  if (!state.token || !state.autoMin || document.visibilityState !== 'visible') return;
+  const due = Math.max(state.lastUpdated, state.lastAttempt) + state.autoMin * 60000;
+  const wait = Math.max(due - Date.now(), state.rateLimitUntil - Date.now(), state.busy || state.refreshing ? 5000 : 0, 1000);
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (autoBlocked() || Date.now() < due) scheduleAuto(); else refresh(true);
+  }, wait);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') { clearTimeout(state.timer); state.timer = null; return; }
+  if (state.token && state.autoMin && !autoBlocked() && Date.now() - state.lastUpdated >= state.autoMin * 60000) refresh(true);
+  else scheduleAuto();
+});
+$('autorefresh').value = String(state.autoMin);
+$('autorefresh').addEventListener('change', () => {
+  state.autoMin = Number($('autorefresh').value);
+  localStorage.setItem(AUTO_KEY, String(state.autoMin));
+  scheduleAuto();
+});
 
 function renderTabs() {
   const nav = $('tabs'); clear(nav);
@@ -268,8 +312,12 @@ function renderDetail(i, base, full, comments, files, st) {
   const act = (label, fn, cls = '') => {
     const b = h('button', { type: 'button', class: cls, onclick: async () => {
       btns.forEach((x) => { x.disabled = true; });
-      try { await fn(); banner(label + ': done', true); await refresh(); if (state.selected === i.id) select(i); }
+      state.busy++;
+      let held = true;
+      const release = () => { if (held) { held = false; state.busy--; } };
+      try { await fn(); banner(label + ': done', true); release(); await refresh(); if (state.selected === i.id) select(i); }
       catch (e) { banner(e.message); btns.forEach((x) => { x.disabled = false; }); }
+      finally { release(); scheduleAuto(); }
     } }, label);
     btns.push(b); return b;
   };
