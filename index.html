@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.github.com; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>GitHub PR Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>PR Dashboard</h1>
+    <div id="userbox" hidden>
+      <span id="username"></span>
+      <button id="refresh" type="button">Refresh</button>
+      <button id="signout" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <div id="banner" role="alert" hidden></div>
+
+  <main>
+    <section id="login" hidden>
+      <h2>Sign in</h2>
+      <p>Paste a GitHub fine-grained personal access token (Pull requests: read/write, Issues: read/write, Metadata: read). It is stored in this browser's localStorage only and sent only to api.github.com.</p>
+      <form id="loginform">
+        <input id="token" type="password" autocomplete="off" placeholder="github_pat_..." required>
+        <button type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <section id="dash" hidden>
+      <nav id="tabs" role="tablist"></nav>
+      <div id="filters">
+        <input id="textfilter" type="search" placeholder="Filter by text">
+        <select id="repofilter"><option value="">All repos</option></select>
+      </div>
+      <div id="layout">
+        <ul id="list"></ul>
+        <aside id="detail" hidden></aside>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
