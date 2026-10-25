@@ -44,7 +44,9 @@ function banner(msg, info = false) {
   b.className = info ? 'info' : '';
 }
 
-class ApiError extends Error {}
+class ApiError extends Error {
+  constructor(msg, status) { super(msg); this.status = status; }
+}
 
 async function gh(path, opts = {}) {
   const res = await fetch(API + path, {
@@ -62,14 +64,14 @@ async function gh(path, opts = {}) {
   try { msg = (await res.json()).message || ''; } catch { /* ignore */ }
   if (res.status === 401) {
     signOut();
-    throw new ApiError('Token rejected (401). Please sign in again.');
+    throw new ApiError('Token rejected (401). Please sign in again.', 401);
   }
   if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
     state.rateLimitUntil = reset || Date.now() + 60000;
-    throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.');
+    throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.', 429);
   }
-  throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`);
+  throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`, res.status);
 }
 
 async function paged(path, max = 100) {
@@ -132,7 +134,7 @@ async function loadTab(tab) {
 async function refresh(auto = false) {
   if (!state.token) return;
   if (auto === true && state.refreshing) return;
-  if (auto !== true) { banner(''); state.status.clear(); }
+  if (auto !== true) { banner(''); state.status.clear(); permBanner(); }
   state.refreshing = true;
   $('refresh').disabled = true;
   const token = state.token;
@@ -210,7 +212,7 @@ function renderList() {
         h('span', {}, `${repoOf(i)}#${i.number}`),
         ...i.labels.map((l) => h('span', { class: 'label' }, l.name)),
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
-        i.pull_request && st ? h('span', { class: 'st-' + st.ci }, 'CI: ' + st.ci) : null,
+        i.pull_request && st ? h('span', { class: 'st-' + st.ci, title: st.ciTip || null }, 'CI: ' + ciLabel(st.ci)) : null,
         i.pull_request && st ? h('span', { class: 'st-' + st.review }, 'Review: ' + st.review) : null,
         link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, 'GitHub ↗') : null)));
   }
@@ -218,12 +220,25 @@ function renderList() {
 
 // ---- PR status (CI + review), fetched lazily with limited concurrency ----
 function ciOf(checks, combined) {
-  const runs = checks.check_runs || [];
+  const runs = (checks && checks.check_runs) || [];
   const states = runs.map((r) => (r.status !== 'completed' ? 'pending'
     : ['success', 'neutral', 'skipped'].includes(r.conclusion) ? 'success' : 'failure'));
-  if (combined.total_count > 0) states.push(combined.state === 'success' ? 'success' : combined.state === 'pending' ? 'pending' : 'failure');
-  if (!states.length) return 'none';
+  if (combined && combined.total_count > 0) states.push(combined.state === 'success' ? 'success' : combined.state === 'pending' ? 'pending' : 'failure');
+  if (!states.length) return null;
   return states.includes('failure') ? 'failure' : states.includes('pending') ? 'pending' : 'success';
+}
+const CI_LABEL = { none: 'none', noaccess: 'no access', error: 'error', unknown: 'unknown' };
+const ciLabel = (ci) => CI_LABEL[ci] || ci;
+const PERM_HINT = { checks: 'Checks: Read', combined: 'Commit statuses: Read', reviews: 'Pull requests: Read' };
+// Derive the CI state from independently fetched sources (each is {ok,value}|{ok:false,error}).
+function ciState(checks, combined) {
+  const val = ciOf(checks.ok ? checks.value : null, combined.ok ? combined.value : null);
+  if (val) return { ci: val, missing: [], ciTip: '' };
+  const failed = [['checks', checks], ['combined', combined]].filter(([, r]) => !r.ok);
+  const missing = failed.filter(([, r]) => r.error.status === 403 || r.error.status === 404).map(([k]) => PERM_HINT[k]);
+  if (failed.length === 2 && missing.length === 2) return { ci: 'noaccess', missing, ciTip: 'Token lacks permission: ' + missing.join(' and ') };
+  if (failed.length) return { ci: 'error', missing, ciTip: failed.map(([, r]) => r.error.message).join('; ') };
+  return { ci: 'none', missing: [], ciTip: 'No CI configured for this commit' };
 }
 function reviewOf(reviews) {
   const latest = new Map();
@@ -231,16 +246,37 @@ function reviewOf(reviews) {
   const v = [...latest.values()];
   return v.includes('CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : v.includes('APPROVED') ? 'APPROVED' : 'REVIEW_REQUIRED';
 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const settle = (p) => p.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
+const fatal = (r) => !r.ok && (r.error.status === 401 || r.error.status === 429);
 async function prStatus(i) {
   const [owner, repo] = repoOf(i).split('/');
   const base = `/repos/${owner}/${repo}`;
-  const pr = await gh(`${base}/pulls/${i.number}`);
+  let pr = await gh(`${base}/pulls/${i.number}`);
+  // mergeable is null while GitHub computes it; retry a few times.
+  for (let n = 0; n < 3 && pr.mergeable == null && pr.state === 'open'; n++) {
+    await sleep(1500);
+    pr = await gh(`${base}/pulls/${i.number}`);
+  }
   const [checks, combined, reviews] = await Promise.all([
-    gh(`${base}/commits/${pr.head.sha}/check-runs?per_page=100`),
-    gh(`${base}/commits/${pr.head.sha}/status`),
-    paged(`${base}/pulls/${i.number}/reviews`),
+    settle(gh(`${base}/commits/${pr.head.sha}/check-runs?per_page=100`)),
+    settle(gh(`${base}/commits/${pr.head.sha}/status`)),
+    settle(paged(`${base}/pulls/${i.number}/reviews`)),
   ]);
-  return { ci: ciOf(checks, combined), review: reviewOf(reviews), pr, checks, combined, reviews };
+  for (const r of [checks, combined, reviews]) if (fatal(r)) throw r.error;
+  const c = ciState(checks, combined);
+  const rv = reviews.ok ? reviewOf(reviews.value) : 'unknown';
+  const missing = [...c.missing];
+  if (!reviews.ok && (reviews.error.status === 403 || reviews.error.status === 404)) missing.push(PERM_HINT.reviews);
+  return { ci: c.ci, ciTip: c.ciTip, missing, review: rv, pr,
+    checks: checks.ok ? checks.value : { check_runs: [] }, combined: combined.ok ? combined.value : null, reviews: reviews.ok ? reviews.value : [] };
+}
+function permBanner() {
+  const miss = new Set();
+  for (const st of state.status.values()) for (const m of st.missing) miss.add(m);
+  const b = $('permbanner');
+  b.hidden = !miss.size;
+  b.textContent = miss.size ? 'Some status info is hidden because the token is missing permissions: add ' + [...miss].join(', ') + ' (Repository permissions) to the token.' : '';
 }
 async function loadPrStatuses() {
   const prs = [...new Map(TABS.filter((t) => t.pr).flatMap((t) => state.data[t.id] || []).map((i) => [i.id, i])).values()];
@@ -248,11 +284,15 @@ async function loadPrStatuses() {
   async function worker() {
     while (idx < prs.length) {
       const i = prs[idx++];
-      try { state.status.set(i.id, await prStatus(i)); renderList(); }
-      catch (e) { banner(e.message); idx = prs.length; }
+      try { state.status.set(i.id, await prStatus(i)); permBanner(); renderList(); }
+      catch (e) {
+        if (e.status === 401 || e.status === 429) { banner(e.message); idx = prs.length; }
+        else state.status.set(i.id, { ci: 'error', ciTip: e.message, missing: [], review: 'unknown', pr: null, checks: { check_runs: [] }, combined: null, reviews: [] });
+      }
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
+  renderList();
 }
 
 // ---- detail ----
@@ -274,7 +314,7 @@ async function select(i) {
       isPr ? paged(`${base}/pulls/${i.number}/files`, 100) : [],
       isPr ? prStatus(i) : null,
     ]);
-    if (st) state.status.set(i.id, st);
+    if (st) { state.status.set(i.id, st); permBanner(); }
     if (state.selected !== i.id) return;
     renderDetail(i, base, full, comments, files, st);
   } catch (e) { banner(e.message); closeDetail(); }
@@ -294,9 +334,10 @@ function renderDetail(i, base, full, comments, files, st) {
   if (isPr && st) {
     d.append(h('h3', {}, 'Status'),
       h('div', { class: 'meta' },
-        h('span', { class: 'st-' + st.ci }, 'CI: ' + st.ci),
+        h('span', { class: 'st-' + st.ci, title: st.ciTip || null }, 'CI: ' + ciLabel(st.ci)),
         h('span', { class: 'st-' + st.review }, 'Review: ' + st.review),
-        h('span', {}, 'mergeable: ' + (st.pr.mergeable_state || 'unknown'))),
+        h('span', {}, 'mergeable: ' + (!st.pr ? 'unknown' : st.pr.mergeable == null && st.pr.state === 'open' ? 'computing…' : (st.pr.mergeable_state || 'unknown')))),
+      st.ciTip ? h('div', { class: 'meta' }, st.ciTip) : null,
       h('ul', {}, ...(st.checks.check_runs || []).map((r) => h('li', {}, `${r.name}: ${r.status === 'completed' ? r.conclusion : r.status}`))));
     d.append(h('h3', {}, `Changed files (${files.length}${files.length >= 100 ? '+' : ''})`),
       h('ul', { class: 'files' }, ...files.map((f) => h('li', {}, `${f.filename} (+${f.additions} −${f.deletions})`))));

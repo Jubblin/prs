@@ -16,6 +16,7 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 #userbox{display:flex;gap:.5rem;align-items:center}
 #banner{padding:.6rem 1rem;background:var(--bad);color:#fff}
 #banner.info{background:var(--warn)}
+#permbanner{padding:.4rem 1rem;background:var(--warn);color:#fff;font-size:.9em}
 #loginform{display:flex;gap:.5rem;flex-wrap:wrap}
 #token{flex:1;min-width:220px}
 #tabs{display:flex;gap:.25rem;flex-wrap:wrap;border-bottom:1px solid var(--border)}
@@ -36,6 +37,9 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 .st-success,.st-APPROVED{color:var(--ok)}
 .st-failure,.st-CHANGES_REQUESTED{color:var(--bad)}
 .st-pending,.st-REVIEW_REQUIRED{color:var(--warn)}
+.st-none,.st-unknown{color:#888}
+.st-noaccess{color:var(--warn);text-decoration:underline dotted}
+.st-error{color:var(--bad);text-decoration:underline dotted}
 #detail{border:1px solid var(--border);border-radius:6px;padding:1rem;background:var(--card);overflow-wrap:anywhere}
 .body{white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:.5rem;max-height:20em;overflow:auto}
 .comment{border-top:1px solid var(--border);padding:.5rem 0}

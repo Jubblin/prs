@@ -27,11 +27,12 @@
   </header>
 
   <div id="banner" role="alert" hidden></div>
+  <div id="permbanner" role="status" hidden></div>
 
   <main>
     <section id="login" hidden>
       <h2>Sign in</h2>
-      <p>Paste a GitHub fine-grained personal access token (Pull requests: read/write, Issues: read/write, Metadata: read). It is stored in this browser's localStorage only and sent only to api.github.com.</p>
+      <p>Paste a GitHub fine-grained personal access token with Repository permissions: Pull requests R/W, Issues R/W, Metadata R, Checks R, Commit statuses R, Contents R (Contents W only needed to merge). It is stored in this browser's localStorage only and sent only to api.github.com.</p>
       <form id="loginform">
         <input id="token" type="password" autocomplete="off" placeholder="github_pat_..." required>
         <button type="submit">Sign in</button>

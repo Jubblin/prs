@@ -19,7 +19,7 @@ Any static host works (e.g. GitHub Pages); there is nothing to build.
 
 1. GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
 2. Choose the repositories you want to see/act on (search results only include repos the token can access, plus public ones).
-3. Repository permissions: **Pull requests: Read and write**, **Issues: Read and write**, **Metadata: Read**. (Add **Checks: Read** and **Commit statuses: Read** to show CI status on private repos.)
+3. Repository permissions: **Pull requests: Read and write**, **Issues: Read and write**, **Metadata: Read**, **Checks: Read**, **Commit statuses: Read**, **Contents: Read** (**Contents: Write** is needed only to merge). Without Checks/Commit statuses the CI column shows "no access" and a banner names the missing permission; "none" means no CI is configured.
 4. Paste the token on the sign-in screen.
 
 ## Security notes
