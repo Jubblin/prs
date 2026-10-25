@@ -13,7 +13,7 @@ const TABS = [
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
 ];
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, status: new Map(), autoMin: loadAuto(), lastUpdated: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
 function loadAuto() {
   const v = localStorage.getItem(AUTO_KEY);
   return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
@@ -87,8 +87,8 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0;
-  showView(); scheduleAuto();
+  state.token = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
   const on = !!state.token;
@@ -142,7 +142,8 @@ async function refresh(auto = false) {
   } finally { $('refresh').disabled = false; state.refreshing = false; }
   if (state.token !== token) return; // signed out meanwhile
   TABS.forEach((t, i) => { if (results[i]) state.data[t.id] = results[i]; });
-  state.lastUpdated = Date.now();
+  state.lastAttempt = Date.now();
+  if (results.some(Boolean)) state.lastUpdated = state.lastAttempt;
   const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
   renderTabs(); renderRepos(); renderList(); renderUpdated();
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
@@ -157,7 +158,7 @@ const autoBlocked = () => state.refreshing || state.busy > 0 || Date.now() < sta
 function scheduleAuto() {
   clearTimeout(state.timer); state.timer = null;
   if (!state.token || !state.autoMin || document.visibilityState !== 'visible') return;
-  const due = state.lastUpdated + state.autoMin * 60000;
+  const due = Math.max(state.lastUpdated, state.lastAttempt) + state.autoMin * 60000;
   const wait = Math.max(due - Date.now(), state.rateLimitUntil - Date.now(), state.busy || state.refreshing ? 5000 : 0, 1000);
   state.timer = setTimeout(() => {
     state.timer = null;
