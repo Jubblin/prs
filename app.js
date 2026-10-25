@@ -1,6 +1,7 @@
 const API = 'https://api.github.com';
 const TOKEN_KEY = 'gh_dashboard_token';
 const REPO_KEY = 'gh_dashboard_repo';
+const TAB_KEY = 'gh_dashboard_tab';
 
 const TABS = [
   { id: 'authored', label: 'My PRs', pr: true, queries: ['is:pr is:open author:@me'] },
@@ -10,7 +11,7 @@ const TABS = [
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
 ];
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: 'authored', data: {}, selected: null, status: new Map() };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, status: new Map() };
 const $ = (id) => document.getElementById(id);
 
 // DOM helper: all text goes through textContent / text nodes, never innerHTML.
@@ -137,7 +138,7 @@ function renderTabs() {
   for (const t of TABS) {
     nav.append(h('button', {
       role: 'tab', type: 'button', 'aria-selected': String(t.id === state.tab),
-      onclick: () => { state.tab = t.id; state.selected = null; closeDetail(); renderTabs(); renderRepos(); renderList(); },
+      onclick: () => { state.tab = t.id; localStorage.setItem(TAB_KEY, t.id); state.selected = null; closeDetail(); renderTabs(); renderRepos(); renderList(); },
     }, t.label, h('span', { class: 'count' }, (state.data[t.id] || []).length)));
   }
 }
