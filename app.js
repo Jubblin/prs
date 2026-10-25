@@ -236,7 +236,7 @@ function ciState(checks, combined) {
   if (val) return { ci: val, missing: [], ciTip: '' };
   const failed = [['checks', checks], ['combined', combined]].filter(([, r]) => !r.ok);
   const missing = failed.filter(([, r]) => r.error.status === 403 || r.error.status === 404).map(([k]) => PERM_HINT[k]);
-  if (failed.length === 2 && missing.length === 2) return { ci: 'noaccess', missing, ciTip: 'Token lacks permission: ' + missing.join(' and ') };
+  if (failed.length && missing.length === failed.length) return { ci: 'noaccess', missing, ciTip: 'Token lacks permission: ' + missing.join(' and ') };
   if (failed.length) return { ci: 'error', missing, ciTip: failed.map(([, r]) => r.error.message).join('; ') };
   return { ci: 'none', missing: [], ciTip: 'No CI configured for this commit' };
 }
