@@ -2,6 +2,10 @@
 
 A static, no-build dashboard (plain HTML/CSS/ES modules) for your open pull requests and issues on GitHub: PRs you authored, PRs awaiting your review, PRs assigned to or mentioning you, and issues assigned to / created by you. Open a row for body, comments, changed files and checks, and approve, request changes, comment, close/reopen or merge.
 
+## Auto-refresh
+
+The lists refresh automatically every 5 minutes; change the interval (Off, 2, 5, 10 min) with the **Auto** selector in the header. The choice is saved in `localStorage`, and the **Last updated HH:MM** label sits next to the **Refresh** button. Auto-refresh pauses while the tab is hidden (and refreshes on return if the data is stale), and is skipped while signed out, while a rate limit is active, or while a comment/approve/merge/close action is in flight. Tab, repo filter, selection and detail scroll are preserved.
+
 ## Run locally
 
 ```sh

@@ -43,3 +43,4 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 textarea{width:100%;min-height:5em}
 .files{font-family:ui-monospace,monospace;font-size:.85em;margin:0;padding-left:1.2em}
 .empty{color:var(--muted);padding:1rem}
+#userbox label{display:flex;gap:.3rem;align-items:center}
