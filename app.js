@@ -90,6 +90,179 @@ async function getMe() {
   return me;
 }
 
+// ---- markdown (no libraries; builds DOM nodes only, never innerHTML) ----
+function safeLink(u) {
+  try { const x = new URL(u); return ['http:', 'https:', 'mailto:'].includes(x.protocol) ? x.href : null; } catch { return null; }
+}
+const mdLink = (href, kids) => h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, kids);
+
+function mdInline(s, depth = 0) {
+  const out = [];
+  let buf = '';
+  const flush = () => { if (buf) { out.push(buf); buf = ''; } };
+  const sub = (t) => (depth > 6 ? [t] : mdInline(t, depth + 1));
+  const next = /[\\`*_~\[!<\n]|https?:\/\//g;
+  const sticky = (re, i) => { re.lastIndex = i; return re.exec(s); };
+  const R = {
+    code: /(`+)([\s\S]*?[^`])\1(?!`)/y,
+    img: /!\[([^\]]*)\]\(\s*([^\s)]+)(?:\s+"[^"]*")?\s*\)/y,
+    link: /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*([^\s)]+)(?:\s+"[^"]*")?\s*\)/y,
+    auto: /<((?:https?:\/\/|mailto:)[^\s<>]+)>/y,
+    bare: /https?:\/\/[^\s<>"]+/y,
+    comment: /<!--[\s\S]*?-->/y,
+    bold: /(\*\*|__)(?=\S)([\s\S]*?\S)\1/y,
+    strike: /~~(?=\S)([\s\S]*?\S)~~/y,
+    ital: /(\*|_)(?=\S)([\s\S]*?\S)\1/y,
+  };
+  let i = 0;
+  while (i < s.length) {
+    next.lastIndex = i;
+    const f = next.exec(s);
+    if (!f) { buf += s.slice(i); break; }
+    buf += s.slice(i, f.index);
+    i = f.index;
+    const c = s[i];
+    let m;
+    const prevWord = i > 0 && /\w/.test(s[i - 1]);
+    if (c === '\n') { flush(); out.push(h('br')); i++; continue; }
+    if (c === '\\' && i + 1 < s.length && /[!-\/:-@\[-`{-~]/.test(s[i + 1])) { buf += s[i + 1]; i += 2; continue; }
+    if (c === '`' && (m = sticky(R.code, i))) { flush(); out.push(h('code', {}, m[2].replace(/^ (.*) $/s, '$1'))); i += m[0].length; continue; }
+    if (c === '!' && s[i + 1] === '[' && (m = sticky(R.img, i))) {
+      flush();
+      const href = safeLink(m[2]);
+      const label = '🖼 ' + (m[1] || m[2]);
+      out.push(href ? mdLink(href, label) : label); i += m[0].length; continue;
+    }
+    if (c === '[' && (m = sticky(R.link, i))) {
+      flush();
+      const href = safeLink(m[2]);
+      out.push(href ? mdLink(href, sub(m[1])) : sub(m[1])); i += m[0].length; continue;
+    }
+    if (c === '<') {
+      if ((m = sticky(R.comment, i))) { flush(); i += m[0].length; continue; }
+      if ((m = sticky(R.auto, i))) { flush(); const href = safeLink(m[1]); out.push(href ? mdLink(href, m[1]) : m[0]); i += m[0].length; continue; }
+    }
+    if (c === 'h' && !prevWord && (m = sticky(R.bare, i))) {
+      let u = m[0];
+      while (/[.,;:!?)\]'*_~]$/.test(u)) u = u.slice(0, -1);
+      const href = safeLink(u);
+      if (href) { flush(); out.push(mdLink(href, u)); i += u.length; continue; }
+    }
+    if (c === '*' || c === '_') {
+      if (!(c === '_' && prevWord) && s[i + 1] === c && (m = sticky(R.bold, i)) && m[1] === c + c) { flush(); out.push(h('strong', {}, sub(m[2]))); i += m[0].length; continue; }
+      if (!(c === '_' && prevWord) && (m = sticky(R.ital, i)) && m[1] === c && !/\w/.test(c === '_' ? (s[i + m[0].length] || ' ') : ' ')) { flush(); out.push(h('em', {}, sub(m[2]))); i += m[0].length; continue; }
+    }
+    if (c === '~' && s[i + 1] === '~' && (m = sticky(R.strike, i))) { flush(); out.push(h('del', {}, sub(m[1]))); i += m[0].length; continue; }
+    buf += c; i++;
+    if (c === 'h' || f[0].length > 1) { buf += f[0].slice(1); i += f[0].length - 1; }
+  }
+  flush();
+  return out;
+}
+
+const MD_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
+const MD_HR = /^ {0,3}([-*_])( *\1){2,} *$/;
+const MD_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const MD_DELIM = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+const mdCells = (line) => {
+  let t = line.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
+  return t.split(/(?<!\\)\|/).map((x) => x.trim().replace(/\\\|/g, '|'));
+};
+const mdStartsBlock = (l, nl) => MD_FENCE.test(l) || /^ {0,3}#{1,6}\s/.test(l) || MD_HR.test(l) || /^ {0,3}>/.test(l)
+  || /^\s*([-*+]|1[.)])[ \t]+\S/.test(l) || /^\s*<!--/.test(l) || (l.includes('|') && nl != null && l.trim() !== '' && MD_DELIM.test(nl) && nl.includes('-') && (nl.includes('|') || mdCells(l).length > 1));
+
+function mdBlocks(lines, depth = 0) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m;
+    if ((m = MD_FENCE.exec(line)) && !(m[1][0] === '`' && m[2].includes('`'))) {
+      const fence = m[1]; const body = [];
+      i++;
+      while (i < lines.length && !(lines[i].trim().startsWith(fence) && /^[`~]+\s*$/.test(lines[i].trim()) && lines[i].trim().length >= fence.length)) body.push(lines[i++]);
+      i++;
+      out.push(h('pre', { class: 'md-pre' }, h('code', {}, body.join('\n'))));
+      continue;
+    }
+    if (/^\s*<!--/.test(line) && !/-->\s*\S/.test(line)) {
+      while (i < lines.length && !lines[i].includes('-->')) i++;
+      i++;
+      continue;
+    }
+    if ((m = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(line))) {
+      out.push(h('h' + Math.min(m[1].length + 2, 6), { class: 'md-h' }, mdInline(m[2])));
+      i++; continue;
+    }
+    if (MD_HR.test(line)) { out.push(h('hr')); i++; continue; }
+    if (/^ {0,3}>/.test(line) && depth < 8) {
+      const q = [];
+      while (i < lines.length && lines[i].trim() && (/^ {0,3}>/.test(lines[i]) || (q.length && !mdStartsBlock(lines[i])))) q.push(lines[i++].replace(/^ {0,3}> ?/, ''));
+      out.push(h('blockquote', {}, mdBlocks(q, depth + 1)));
+      continue;
+    }
+    if (line.includes('|') && i + 1 < lines.length && MD_DELIM.test(lines[i + 1]) && lines[i + 1].includes('-') && (lines[i + 1].includes('|') || mdCells(line).length > 1)) {
+      const head = mdCells(line);
+      const al = mdCells(lines[i + 1]).map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : null));
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) rows.push(mdCells(lines[i++]));
+      const cell = (tag, t, k) => h(tag, al[k] ? { style: 'text-align:' + al[k] } : {}, mdInline(t));
+      out.push(h('div', { class: 'md-table' }, h('table', {},
+        h('thead', {}, h('tr', {}, head.map((t, k) => cell('th', t, k)))),
+        h('tbody', {}, rows.map((r) => h('tr', {}, head.map((_, k) => cell('td', r[k] || '', k))))))));
+      continue;
+    }
+    if ((m = MD_ITEM.exec(line)) && depth < 8) {
+      const base = m[1].length;
+      const ordered = /\d/.test(m[2]);
+      const items = [];
+      let cur = null;
+      while (i < lines.length) {
+        const l = lines[i];
+        const im = MD_ITEM.exec(l);
+        if (im && im[1].length <= base + 1 && !MD_HR.test(l)) {
+          if (/\d/.test(im[2]) !== ordered && items.length) break;
+          cur = { first: im[3], rest: [], indent: im[1].length + im[2].length + 1 }; items.push(cur); i++; continue;
+        }
+        if (!l.trim()) {
+          let j = i; while (j < lines.length && !lines[j].trim()) j++;
+          if (j < lines.length && (/^\s{2,}\S/.test(lines[j]) && lines[j].search(/\S/) > base || (MD_ITEM.exec(lines[j]) && MD_ITEM.exec(lines[j])[1].length <= base + 1 && /\d/.test(MD_ITEM.exec(lines[j])[2]) === ordered))) {
+            for (; i < j; i++) cur.rest.push('');
+            continue;
+          }
+          break;
+        }
+        if (l.search(/\S/) > base || !mdStartsBlock(l)) { cur.rest.push(l.slice(Math.min(l.search(/\S/), cur.indent))); i++; continue; }
+        break;
+      }
+      const lis = items.map((it) => {
+        let first = it.first; let box = null;
+        const tm = /^\[([ xX])\][ \t]+(.*)$/.exec(first);
+        if (tm) { box = h('input', { type: 'checkbox', disabled: true, checked: tm[1] !== ' ', 'aria-label': tm[1] === ' ' ? 'not done' : 'done' }); first = tm[2]; }
+        const kids = mdBlocks([first, ...it.rest], depth + 1);
+        if (box) { if (kids[0] && kids[0].tagName === 'P') kids[0].prepend(box, ' '); else kids.unshift(box); }
+        return h('li', box ? { class: 'task' } : {}, kids);
+      });
+      const start = ordered ? parseInt(m[2], 10) : null;
+      out.push(h(ordered ? 'ol' : 'ul', ordered && start !== 1 ? { start: String(start) } : {}, lis));
+      continue;
+    }
+    const para = [line.replace(/^ +/, '')];
+    i++;
+    while (i < lines.length && lines[i].trim() && !mdStartsBlock(lines[i], lines[i + 1])) para.push(lines[i++].replace(/^ +/, ''));
+    out.push(h('p', {}, mdInline(para.join('\n').replace(/[ \t]+$/gm, ''))));
+  }
+  return out;
+}
+
+function renderMarkdown(text) {
+  return h('div', { class: 'md' }, mdBlocks(String(text || '').replace(/\r\n?/g, '\n').split('\n')));
+}
+
 async function paged(path, max = 100) {
   const sep = path.includes('?') ? '&' : '?';
   return gh(`${path}${sep}per_page=${max}`);
@@ -346,7 +519,7 @@ function renderDetail(i, base, full, comments, files, st, me) {
     h('div', { class: 'meta' }, h('span', {}, 'by ' + (full.user ? full.user.login : 'unknown')), h('span', {}, 'state: ' + full.state),
       link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, 'Open on GitHub ↗') : null,
       h('button', { type: 'button', onclick: () => { closeDetail(); state.selected = null; renderList(); } }, 'Close')),
-    h('div', { class: 'body' }, full.body || '(no description)'));
+    full.body ? h('div', { class: 'body' }, renderMarkdown(full.body)) : h('div', { class: 'body' }, '(no description)'));
 
   if (isPr && st) {
     d.append(h('h3', {}, 'Status'),
@@ -363,7 +536,7 @@ function renderDetail(i, base, full, comments, files, st, me) {
   d.append(h('h3', {}, `Comments (${comments.length})`),
     ...comments.map((c) => h('div', { class: 'comment' },
       h('div', { class: 'meta' }, (c.user ? c.user.login : 'unknown') + ' · ' + ago(c.created_at) + ' ago'),
-      h('div', { class: 'body' }, c.body))));
+      h('div', { class: 'body' }, renderMarkdown(c.body)))));
 
   const ta = h('textarea', { placeholder: 'Comment (optional for approve)' });
   const btns = [];

@@ -31,3 +31,5 @@ Any static host works (e.g. GitHub Pages); there is nothing to build.
 - All API-provided text is inserted via `textContent`; no `innerHTML`.
 - Anyone with access to your browser profile or an XSS on the host origin can read the token; use a short-lived, minimally scoped token and host on an origin you control.
 - Rate limits and API errors are shown in the red banner at the top.
+
+PR/issue bodies and comments are rendered as Markdown by a small built-in renderer (`renderMarkdown` in `app.js`): headings, emphasis, strikethrough, inline/fenced code, blockquotes, lists, task-list checkboxes (read-only), tables, rules, links and autolinks (http/https/mailto only). Images show as links (nothing remote is loaded), raw HTML is shown as text and `<!-- comments -->` are hidden. Output is built with DOM nodes only, never `innerHTML`.
