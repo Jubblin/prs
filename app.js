@@ -338,7 +338,7 @@ async function loadTab(tab) {
 async function refresh(auto = false) {
   if (!state.token) return;
   if (auto === true && state.refreshing) return;
-  if (auto !== true) { banner(''); state.status.clear(); permBanner(); }
+  if (auto !== true) { banner(''); permBanner(); }
   state.refreshing = true;
   $('refresh').disabled = true;
   const token = state.token;
@@ -402,7 +402,12 @@ function renderRepos() {
 }
 
 function renderList() {
-  const ul = $('list'); clear(ul);
+  const ul = $('list'), detail = $('detail'), y = window.scrollY, x = window.scrollX, dy = detail.scrollTop, ly = ul.scrollTop;
+  buildList(ul);
+  window.scrollTo(x, y); detail.scrollTop = dy; ul.scrollTop = ly;
+}
+function buildList(ul) {
+  clear(ul);
   const q = $('textfilter').value.toLowerCase(), repo = $('repofilter').value;
   const items = (state.data[state.tab] || []).filter((i) =>
     (!repo || repoOf(i) === repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
@@ -416,8 +421,8 @@ function renderList() {
         h('span', {}, `${repoOf(i)}#${i.number}`),
         ...i.labels.map((l) => h('span', { class: 'label' }, l.name)),
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
-        i.pull_request && st ? h('span', { class: 'st-' + st.ci, title: st.ciTip || null }, 'CI: ' + ciLabel(st.ci)) : null,
-        i.pull_request && st ? h('span', { class: 'st-' + st.review }, 'Review: ' + st.review) : null,
+        i.pull_request ? h('span', { class: st ? 'st-' + st.ci : 'st-loading', title: (st && st.ciTip) || null }, 'CI: ' + (st ? ciLabel(st.ci) : '…')) : null,
+        i.pull_request ? h('span', { class: st ? 'st-' + st.review : 'st-loading' }, 'Review: ' + (st ? st.review : '…')) : null,
         link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, 'GitHub ↗') : null)));
   }
 }
