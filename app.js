@@ -44,7 +44,9 @@ function banner(msg, info = false) {
   b.className = info ? 'info' : '';
 }
 
-class ApiError extends Error {}
+class ApiError extends Error {
+  constructor(msg, status) { super(msg); this.status = status; }
+}
 
 async function gh(path, opts = {}) {
   const res = await fetch(API + path, {
@@ -59,17 +61,221 @@ async function gh(path, opts = {}) {
   });
   if (res.ok) return res.status === 204 ? null : res.json();
   let msg = '';
-  try { msg = (await res.json()).message || ''; } catch { /* ignore */ }
+  try {
+    const j = await res.json();
+    msg = j.message || '';
+    if (Array.isArray(j.errors) && j.errors.length) {
+      const det = j.errors.map((x) => typeof x === 'string' ? x
+        : x && typeof x === 'object' ? [x.message, x.resource, x.field, x.code].filter(Boolean).join(' ') : String(x)).filter(Boolean).join('; ');
+      if (det) msg += (msg ? ' — ' : '') + det;
+    }
+  } catch { /* ignore */ }
   if (res.status === 401) {
     signOut();
-    throw new ApiError('Token rejected (401). Please sign in again.');
+    throw new ApiError('Token rejected (401). Please sign in again.', 401);
   }
   if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
     state.rateLimitUntil = reset || Date.now() + 60000;
-    throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.');
+    throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.', 429);
   }
-  throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`);
+  throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`, res.status);
+}
+
+async function getMe() {
+  if (state.me) return state.me;
+  const token = state.token;
+  const me = (await gh('/user')).login;
+  if (state.token === token) state.me = me;
+  return me;
+}
+
+// ---- markdown (no libraries; builds DOM nodes only, never innerHTML) ----
+function safeLink(u) {
+  try { const x = new URL(u); return ['http:', 'https:', 'mailto:'].includes(x.protocol) ? x.href : null; } catch { return null; }
+}
+function safeImg(u) {
+  try {
+    const x = new URL(u);
+    if (x.protocol !== 'https:' || x.username || x.password || x.port) return null;
+    const host = x.hostname.toLowerCase();
+    return host === 'github.com' || host === 'github.githubassets.com' || host.endsWith('.githubusercontent.com') ? x.href : null;
+  } catch { return null; }
+}
+const mdLink = (href, kids) => h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, kids);
+
+function mdInline(s, depth = 0) {
+  const out = [];
+  let buf = '';
+  const flush = () => { if (buf) { out.push(buf); buf = ''; } };
+  const sub = (t) => (depth > 6 ? [t] : mdInline(t, depth + 1));
+  const next = /[\\`*_~\[!<\n]|https?:\/\//g;
+  const sticky = (re, i) => { re.lastIndex = i; return re.exec(s); };
+  const R = {
+    code: /(`+)([\s\S]*?[^`])\1(?!`)/y,
+    img: /!\[([^\]]*)\]\(\s*([^\s)]+)(?:\s+"[^"]*")?\s*\)/y,
+    link: /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*([^\s)]+)(?:\s+"[^"]*")?\s*\)/y,
+    auto: /<((?:https?:\/\/|mailto:)[^\s<>]+)>/y,
+    bare: /https?:\/\/[^\s<>"]+/y,
+    comment: /<!--[\s\S]*?-->/y,
+    bold: /(\*\*|__)(?=\S)([\s\S]*?\S)\1/y,
+    strike: /~~(?=\S)([\s\S]*?\S)~~/y,
+    ital: /(\*|_)(?=\S)([\s\S]*?\S)\1/y,
+  };
+  let i = 0;
+  while (i < s.length) {
+    next.lastIndex = i;
+    const f = next.exec(s);
+    if (!f) { buf += s.slice(i); break; }
+    buf += s.slice(i, f.index);
+    i = f.index;
+    const c = s[i];
+    let m;
+    const prevWord = i > 0 && /\w/.test(s[i - 1]);
+    if (c === '\n') { flush(); out.push(h('br')); i++; continue; }
+    if (c === '\\' && i + 1 < s.length && /[!-\/:-@\[-`{-~]/.test(s[i + 1])) { buf += s[i + 1]; i += 2; continue; }
+    if (c === '`' && (m = sticky(R.code, i))) { flush(); out.push(h('code', {}, m[2].replace(/^ (.*) $/s, '$1'))); i += m[0].length; continue; }
+    if (c === '!' && s[i + 1] === '[' && (m = sticky(R.img, i))) {
+      flush();
+      const href = safeLink(m[2]);
+      const alt = m[1] || m[2];
+      const label = '🖼 ' + alt;
+      const src = safeImg(m[2]);
+      if (src) {
+        const img = h('img', { src, alt, loading: 'lazy', referrerpolicy: 'no-referrer', class: 'md-img' });
+        img.addEventListener('error', () => { img.replaceWith(h('a', { href: src, target: '_blank', rel: 'noopener noreferrer' }, label)); }, { once: true });
+        out.push(img);
+      } else out.push(href ? mdLink(href, label) : label);
+      i += m[0].length; continue;
+    }
+    if (c === '[' && (m = sticky(R.link, i))) {
+      flush();
+      const href = safeLink(m[2]);
+      out.push(href ? mdLink(href, sub(m[1])) : sub(m[1])); i += m[0].length; continue;
+    }
+    if (c === '<') {
+      if ((m = sticky(R.comment, i))) { flush(); i += m[0].length; continue; }
+      if ((m = sticky(R.auto, i))) { flush(); const href = safeLink(m[1]); out.push(href ? mdLink(href, m[1]) : m[0]); i += m[0].length; continue; }
+    }
+    if (c === 'h' && !prevWord && (m = sticky(R.bare, i))) {
+      let u = m[0];
+      while (/[.,;:!?)\]'*_~]$/.test(u)) u = u.slice(0, -1);
+      const href = safeLink(u);
+      if (href) { flush(); out.push(mdLink(href, u)); i += u.length; continue; }
+    }
+    if (c === '*' || c === '_') {
+      if (!(c === '_' && prevWord) && s[i + 1] === c && (m = sticky(R.bold, i)) && m[1] === c + c) { flush(); out.push(h('strong', {}, sub(m[2]))); i += m[0].length; continue; }
+      if (!(c === '_' && prevWord) && (m = sticky(R.ital, i)) && m[1] === c && !/\w/.test(c === '_' ? (s[i + m[0].length] || ' ') : ' ')) { flush(); out.push(h('em', {}, sub(m[2]))); i += m[0].length; continue; }
+    }
+    if (c === '~' && s[i + 1] === '~' && (m = sticky(R.strike, i))) { flush(); out.push(h('del', {}, sub(m[1]))); i += m[0].length; continue; }
+    buf += c; i++;
+    if (c === 'h' || f[0].length > 1) { buf += f[0].slice(1); i += f[0].length - 1; }
+  }
+  flush();
+  return out;
+}
+
+const MD_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
+const MD_HR = /^ {0,3}([-*_])( *\1){2,} *$/;
+const MD_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const MD_DELIM = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+const mdCells = (line) => {
+  let t = line.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
+  return t.split(/(?<!\\)\|/).map((x) => x.trim().replace(/\\\|/g, '|'));
+};
+const mdStartsBlock = (l, nl) => MD_FENCE.test(l) || /^ {0,3}#{1,6}\s/.test(l) || MD_HR.test(l) || /^ {0,3}>/.test(l)
+  || /^\s*([-*+]|1[.)])[ \t]+\S/.test(l) || /^\s*<!--/.test(l) || (l.includes('|') && nl != null && l.trim() !== '' && MD_DELIM.test(nl) && nl.includes('-') && (nl.includes('|') || mdCells(l).length > 1));
+
+function mdBlocks(lines, depth = 0) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m;
+    if ((m = MD_FENCE.exec(line)) && !(m[1][0] === '`' && m[2].includes('`'))) {
+      const fence = m[1]; const body = [];
+      i++;
+      while (i < lines.length && !(lines[i].trim().startsWith(fence) && /^[`~]+\s*$/.test(lines[i].trim()) && lines[i].trim().length >= fence.length)) body.push(lines[i++]);
+      i++;
+      out.push(h('pre', { class: 'md-pre' }, h('code', {}, body.join('\n'))));
+      continue;
+    }
+    if (/^\s*<!--/.test(line) && !/-->\s*\S/.test(line)) {
+      while (i < lines.length && !lines[i].includes('-->')) i++;
+      i++;
+      continue;
+    }
+    if ((m = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(line))) {
+      out.push(h('h' + Math.min(m[1].length + 2, 6), { class: 'md-h' }, mdInline(m[2])));
+      i++; continue;
+    }
+    if (MD_HR.test(line)) { out.push(h('hr')); i++; continue; }
+    if (/^ {0,3}>/.test(line) && depth < 8) {
+      const q = [];
+      while (i < lines.length && lines[i].trim() && (/^ {0,3}>/.test(lines[i]) || (q.length && !mdStartsBlock(lines[i])))) q.push(lines[i++].replace(/^ {0,3}> ?/, ''));
+      out.push(h('blockquote', {}, mdBlocks(q, depth + 1)));
+      continue;
+    }
+    if (line.includes('|') && i + 1 < lines.length && MD_DELIM.test(lines[i + 1]) && lines[i + 1].includes('-') && (lines[i + 1].includes('|') || mdCells(line).length > 1)) {
+      const head = mdCells(line);
+      const al = mdCells(lines[i + 1]).map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : null));
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) rows.push(mdCells(lines[i++]));
+      const cell = (tag, t, k) => h(tag, al[k] ? { class: 'md-' + al[k] } : {}, mdInline(t));
+      out.push(h('div', { class: 'md-table' }, h('table', {},
+        h('thead', {}, h('tr', {}, head.map((t, k) => cell('th', t, k)))),
+        h('tbody', {}, rows.map((r) => h('tr', {}, head.map((_, k) => cell('td', r[k] || '', k))))))));
+      continue;
+    }
+    if ((m = MD_ITEM.exec(line)) && depth < 8) {
+      const base = m[1].length;
+      const ordered = /\d/.test(m[2]);
+      const items = [];
+      let cur = null;
+      while (i < lines.length) {
+        const l = lines[i];
+        const im = MD_ITEM.exec(l);
+        if (im && im[1].length <= base + 1 && !MD_HR.test(l)) {
+          if (/\d/.test(im[2]) !== ordered && items.length) break;
+          cur = { first: im[3], rest: [], indent: im[1].length + im[2].length + 1 }; items.push(cur); i++; continue;
+        }
+        if (!l.trim()) {
+          let j = i; while (j < lines.length && !lines[j].trim()) j++;
+          if (j < lines.length && (/^\s{2,}\S/.test(lines[j]) && lines[j].search(/\S/) > base || (MD_ITEM.exec(lines[j]) && MD_ITEM.exec(lines[j])[1].length <= base + 1 && /\d/.test(MD_ITEM.exec(lines[j])[2]) === ordered))) {
+            for (; i < j; i++) cur.rest.push('');
+            continue;
+          }
+          break;
+        }
+        if (l.search(/\S/) > base || !mdStartsBlock(l)) { cur.rest.push(l.slice(Math.min(l.search(/\S/), cur.indent))); i++; continue; }
+        break;
+      }
+      const lis = items.map((it) => {
+        let first = it.first; let box = null;
+        const tm = /^\[([ xX])\][ \t]+(.*)$/.exec(first);
+        if (tm) { box = h('input', { type: 'checkbox', disabled: true, checked: tm[1] !== ' ', 'aria-label': tm[1] === ' ' ? 'not done' : 'done' }); first = tm[2]; }
+        const kids = mdBlocks([first, ...it.rest], depth + 1);
+        if (box) { if (kids[0] && kids[0].tagName === 'P') kids[0].prepend(box, ' '); else kids.unshift(box); }
+        return h('li', box ? { class: 'task' } : {}, kids);
+      });
+      const start = ordered ? parseInt(m[2], 10) : null;
+      out.push(h(ordered ? 'ol' : 'ul', ordered && start !== 1 ? { start: String(start) } : {}, lis));
+      continue;
+    }
+    const para = [line.replace(/^ +/, '')];
+    i++;
+    while (i < lines.length && lines[i].trim() && !mdStartsBlock(lines[i], lines[i + 1])) para.push(lines[i++].replace(/^ +/, ''));
+    out.push(h('p', {}, mdInline(para.join('\n').replace(/[ \t]+$/gm, ''))));
+  }
+  return out;
+}
+
+function renderMarkdown(text) {
+  return h('div', { class: 'md' }, mdBlocks(String(text || '').replace(/\r\n?/g, '\n').split('\n')));
 }
 
 async function paged(path, max = 100) {
@@ -87,7 +293,7 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  state.token = null; state.me = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
@@ -101,7 +307,7 @@ $('loginform').addEventListener('submit', async (e) => {
   try {
     const me = await gh('/user');
     localStorage.setItem(TOKEN_KEY, state.token);
-    $('username').textContent = me.login;
+    $('username').textContent = me.login; state.me = me.login;
     banner('');
     showView(); refresh();
   } catch (err) {
@@ -132,7 +338,7 @@ async function loadTab(tab) {
 async function refresh(auto = false) {
   if (!state.token) return;
   if (auto === true && state.refreshing) return;
-  if (auto !== true) { banner(''); state.status.clear(); }
+  if (auto !== true) { banner(''); state.status.clear(); permBanner(); }
   state.refreshing = true;
   $('refresh').disabled = true;
   const token = state.token;
@@ -210,7 +416,7 @@ function renderList() {
         h('span', {}, `${repoOf(i)}#${i.number}`),
         ...i.labels.map((l) => h('span', { class: 'label' }, l.name)),
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
-        i.pull_request && st ? h('span', { class: 'st-' + st.ci }, 'CI: ' + st.ci) : null,
+        i.pull_request && st ? h('span', { class: 'st-' + st.ci, title: st.ciTip || null }, 'CI: ' + ciLabel(st.ci)) : null,
         i.pull_request && st ? h('span', { class: 'st-' + st.review }, 'Review: ' + st.review) : null,
         link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, 'GitHub ↗') : null)));
   }
@@ -218,12 +424,25 @@ function renderList() {
 
 // ---- PR status (CI + review), fetched lazily with limited concurrency ----
 function ciOf(checks, combined) {
-  const runs = checks.check_runs || [];
+  const runs = (checks && checks.check_runs) || [];
   const states = runs.map((r) => (r.status !== 'completed' ? 'pending'
     : ['success', 'neutral', 'skipped'].includes(r.conclusion) ? 'success' : 'failure'));
-  if (combined.total_count > 0) states.push(combined.state === 'success' ? 'success' : combined.state === 'pending' ? 'pending' : 'failure');
-  if (!states.length) return 'none';
+  if (combined && combined.total_count > 0) states.push(combined.state === 'success' ? 'success' : combined.state === 'pending' ? 'pending' : 'failure');
+  if (!states.length) return null;
   return states.includes('failure') ? 'failure' : states.includes('pending') ? 'pending' : 'success';
+}
+const CI_LABEL = { none: 'none', noaccess: 'no access', error: 'error', unknown: 'unknown' };
+const ciLabel = (ci) => CI_LABEL[ci] || ci;
+const PERM_HINT = { checks: 'Checks: Read', combined: 'Commit statuses: Read', reviews: 'Pull requests: Read' };
+// Derive the CI state from independently fetched sources (each is {ok,value}|{ok:false,error}).
+function ciState(checks, combined) {
+  const val = ciOf(checks.ok ? checks.value : null, combined.ok ? combined.value : null);
+  if (val) return { ci: val, missing: [], ciTip: '' };
+  const failed = [['checks', checks], ['combined', combined]].filter(([, r]) => !r.ok);
+  const missing = failed.filter(([, r]) => r.error.status === 403 || r.error.status === 404).map(([k]) => PERM_HINT[k]);
+  if (failed.length && missing.length === failed.length) return { ci: 'noaccess', missing, ciTip: 'Token lacks permission: ' + missing.join(' and ') };
+  if (failed.length) return { ci: 'error', missing, ciTip: failed.map(([, r]) => r.error.message).join('; ') };
+  return { ci: 'none', missing: [], ciTip: 'No CI configured for this commit' };
 }
 function reviewOf(reviews) {
   const latest = new Map();
@@ -231,16 +450,37 @@ function reviewOf(reviews) {
   const v = [...latest.values()];
   return v.includes('CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : v.includes('APPROVED') ? 'APPROVED' : 'REVIEW_REQUIRED';
 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const settle = (p) => p.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
+const fatal = (r) => !r.ok && (r.error.status === 401 || r.error.status === 429);
 async function prStatus(i) {
   const [owner, repo] = repoOf(i).split('/');
   const base = `/repos/${owner}/${repo}`;
-  const pr = await gh(`${base}/pulls/${i.number}`);
+  let pr = await gh(`${base}/pulls/${i.number}`);
+  // mergeable is null while GitHub computes it; retry a few times.
+  for (let n = 0; n < 3 && pr.mergeable == null && pr.state === 'open'; n++) {
+    await sleep(1500);
+    pr = await gh(`${base}/pulls/${i.number}`);
+  }
   const [checks, combined, reviews] = await Promise.all([
-    gh(`${base}/commits/${pr.head.sha}/check-runs?per_page=100`),
-    gh(`${base}/commits/${pr.head.sha}/status`),
-    paged(`${base}/pulls/${i.number}/reviews`),
+    settle(gh(`${base}/commits/${pr.head.sha}/check-runs?per_page=100`)),
+    settle(gh(`${base}/commits/${pr.head.sha}/status`)),
+    settle(paged(`${base}/pulls/${i.number}/reviews`)),
   ]);
-  return { ci: ciOf(checks, combined), review: reviewOf(reviews), pr, checks, combined, reviews };
+  for (const r of [checks, combined, reviews]) if (fatal(r)) throw r.error;
+  const c = ciState(checks, combined);
+  const rv = reviews.ok ? reviewOf(reviews.value) : 'unknown';
+  const missing = [...c.missing];
+  if (!reviews.ok && (reviews.error.status === 403 || reviews.error.status === 404)) missing.push(PERM_HINT.reviews);
+  return { ci: c.ci, ciTip: c.ciTip, missing, review: rv, pr,
+    checks: checks.ok ? checks.value : { check_runs: [] }, combined: combined.ok ? combined.value : null, reviews: reviews.ok ? reviews.value : [] };
+}
+function permBanner() {
+  const miss = new Set();
+  for (const st of state.status.values()) for (const m of st.missing) miss.add(m);
+  const b = $('permbanner');
+  b.hidden = !miss.size;
+  b.textContent = miss.size ? 'Some status info is hidden because the token is missing permissions: add ' + [...miss].join(', ') + ' (Repository permissions) to the token.' : '';
 }
 async function loadPrStatuses() {
   const prs = [...new Map(TABS.filter((t) => t.pr).flatMap((t) => state.data[t.id] || []).map((i) => [i.id, i])).values()];
@@ -248,11 +488,15 @@ async function loadPrStatuses() {
   async function worker() {
     while (idx < prs.length) {
       const i = prs[idx++];
-      try { state.status.set(i.id, await prStatus(i)); renderList(); }
-      catch (e) { banner(e.message); idx = prs.length; }
+      try { state.status.set(i.id, await prStatus(i)); permBanner(); renderList(); }
+      catch (e) {
+        if (e.status === 401 || e.status === 429) { banner(e.message); idx = prs.length; }
+        else state.status.set(i.id, { ci: 'error', ciTip: e.message, missing: [], review: 'unknown', pr: null, checks: { check_runs: [] }, combined: null, reviews: [] });
+      }
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
+  renderList();
 }
 
 // ---- detail ----
@@ -268,19 +512,20 @@ async function select(i) {
     const [owner, repo] = repoOf(i).split('/');
     const base = `/repos/${owner}/${repo}`;
     const isPr = !!i.pull_request;
-    const [full, comments, files, st] = await Promise.all([
+    const [full, comments, files, st, me] = await Promise.all([
       gh(`${base}/issues/${i.number}`),
       paged(`${base}/issues/${i.number}/comments`),
       isPr ? paged(`${base}/pulls/${i.number}/files`, 100) : [],
       isPr ? prStatus(i) : null,
+      isPr ? getMe().catch(() => null) : null,
     ]);
-    if (st) state.status.set(i.id, st);
+    if (st) { state.status.set(i.id, st); permBanner(); }
     if (state.selected !== i.id) return;
-    renderDetail(i, base, full, comments, files, st);
+    renderDetail(i, base, full, comments, files, st, me);
   } catch (e) { banner(e.message); closeDetail(); }
 }
 
-function renderDetail(i, base, full, comments, files, st) {
+function renderDetail(i, base, full, comments, files, st, me) {
   const d = $('detail'); clear(d);
   const isPr = !!i.pull_request;
   const link = safeUrl(full.html_url);
@@ -289,14 +534,15 @@ function renderDetail(i, base, full, comments, files, st) {
     h('div', { class: 'meta' }, h('span', {}, 'by ' + (full.user ? full.user.login : 'unknown')), h('span', {}, 'state: ' + full.state),
       link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, 'Open on GitHub ↗') : null,
       h('button', { type: 'button', onclick: () => { closeDetail(); state.selected = null; renderList(); } }, 'Close')),
-    h('div', { class: 'body' }, full.body || '(no description)'));
+    full.body ? h('div', { class: 'body' }, renderMarkdown(full.body)) : h('div', { class: 'body' }, '(no description)'));
 
   if (isPr && st) {
     d.append(h('h3', {}, 'Status'),
       h('div', { class: 'meta' },
-        h('span', { class: 'st-' + st.ci }, 'CI: ' + st.ci),
+        h('span', { class: 'st-' + st.ci, title: st.ciTip || null }, 'CI: ' + ciLabel(st.ci)),
         h('span', { class: 'st-' + st.review }, 'Review: ' + st.review),
-        h('span', {}, 'mergeable: ' + (st.pr.mergeable_state || 'unknown'))),
+        h('span', {}, 'mergeable: ' + (!st.pr ? 'unknown' : st.pr.mergeable == null && st.pr.state === 'open' ? 'computing…' : (st.pr.mergeable_state || 'unknown')))),
+      st.ciTip ? h('div', { class: 'meta' }, st.ciTip) : null,
       h('ul', {}, ...(st.checks.check_runs || []).map((r) => h('li', {}, `${r.name}: ${r.status === 'completed' ? r.conclusion : r.status}`))));
     d.append(h('h3', {}, `Changed files (${files.length}${files.length >= 100 ? '+' : ''})`),
       h('ul', { class: 'files' }, ...files.map((f) => h('li', {}, `${f.filename} (+${f.additions} −${f.deletions})`))));
@@ -305,7 +551,7 @@ function renderDetail(i, base, full, comments, files, st) {
   d.append(h('h3', {}, `Comments (${comments.length})`),
     ...comments.map((c) => h('div', { class: 'comment' },
       h('div', { class: 'meta' }, (c.user ? c.user.login : 'unknown') + ' · ' + ago(c.created_at) + ' ago'),
-      h('div', { class: 'body' }, c.body))));
+      h('div', { class: 'body' }, renderMarkdown(c.body)))));
 
   const ta = h('textarea', { placeholder: 'Comment (optional for approve)' });
   const btns = [];
@@ -316,7 +562,7 @@ function renderDetail(i, base, full, comments, files, st) {
       let held = true;
       const release = () => { if (held) { held = false; state.busy--; } };
       try { await fn(); banner(label + ': done', true); release(); await refresh(); if (state.selected === i.id) select(i); }
-      catch (e) { banner(e.message); btns.forEach((x) => { x.disabled = false; }); }
+      catch (e) { banner(e.message); btns.forEach((x) => { x.disabled = x.dataset.locked === '1'; }); }
       finally { release(); scheduleAuto(); }
     } }, label);
     btns.push(b); return b;
@@ -326,10 +572,19 @@ function renderDetail(i, base, full, comments, files, st) {
   const review = (event) => gh(`${base}/pulls/${i.number}/reviews`, { method: 'POST', body: { event, ...(text() ? { body: text() } : {}) } });
   const comment = act('Comment', () => gh(`${base}/issues/${i.number}/comments`, { method: 'POST', body: { body: needText() } }));
   const row = h('div', { class: 'actions' }, comment);
+  let reviewNote = null;
   if (isPr) {
+    const own = !!(me && full.user && full.user.login.toLowerCase() === me.toLowerCase());
+    const isDraft = !!(full.draft || (st && st.pr && st.pr.draft));
+    const noReview = own || full.state !== 'open';
+    const approve = act('Approve', () => review('APPROVE'), 'primary');
+    const reqChanges = act('Request changes', () => { needText(); return review('REQUEST_CHANGES'); }, 'danger');
+    if (noReview) { approve.disabled = true; reqChanges.disabled = true; approve.dataset.locked = reqChanges.dataset.locked = '1'; }
+    reviewNote = own ? 'GitHub does not allow approving your own PR'
+      : full.state !== 'open' ? 'This PR is closed or merged, so it cannot be reviewed'
+      : isDraft ? 'This PR is a draft; reviews may be rejected until it is ready' : null;
     row.append(
-      act('Approve', () => review('APPROVE'), 'primary'),
-      act('Request changes', () => { needText(); return review('REQUEST_CHANGES'); }, 'danger'),
+      approve, reqChanges,
       act('Merge', async () => {
         if (!confirm(`Merge ${repoOf(i)}#${i.number}?\n\n${full.title}`)) throw new ApiError('Merge cancelled.');
         await gh(`${base}/pulls/${i.number}/merge`, { method: 'PUT', body: { merge_method: 'merge' } });
@@ -337,12 +592,12 @@ function renderDetail(i, base, full, comments, files, st) {
   }
   const closed = full.state === 'closed';
   row.append(act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : ''));
-  d.append(h('h3', {}, 'Actions'), ta, row);
+  d.append(h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
 }
 
 // ---- init ----
 state.token = localStorage.getItem(TOKEN_KEY);
 showView();
 if (state.token) {
-  gh('/user').then((me) => { $('username').textContent = me.login; refresh(); }).catch((e) => banner(e.message));
+  gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; refresh(); }).catch((e) => banner(e.message));
 }

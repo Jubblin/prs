@@ -6,6 +6,8 @@ A static, no-build dashboard (plain HTML/CSS/ES modules) for your open pull requ
 
 The lists refresh automatically every 5 minutes; change the interval (Off, 2, 5, 10 min) with the **Auto** selector in the header. The choice is saved in `localStorage`, and the **Last updated HH:MM** label sits next to the **Refresh** button. Auto-refresh pauses while the tab is hidden (and refreshes on return if the data is stale), and is skipped while signed out, while a rate limit is active, or while a comment/approve/merge/close action is in flight. Tab, repo filter, selection and detail scroll are preserved.
 
+Approve and Request changes are disabled (with an explanation) on your own PRs and on closed/merged PRs, since GitHub rejects those with a 422; drafts show a note. Any API error now includes GitHub's detailed reasons.
+
 ## Run locally
 
 ```sh
@@ -19,7 +21,7 @@ Any static host works (e.g. GitHub Pages); there is nothing to build.
 
 1. GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
 2. Choose the repositories you want to see/act on (search results only include repos the token can access, plus public ones).
-3. Repository permissions: **Pull requests: Read and write**, **Issues: Read and write**, **Metadata: Read**. (Add **Checks: Read** and **Commit statuses: Read** to show CI status on private repos.)
+3. Repository permissions: **Pull requests: Read and write**, **Issues: Read and write**, **Metadata: Read**, **Checks: Read**, **Commit statuses: Read**, **Contents: Read** (**Contents: Write** is needed only to merge). Without Checks/Commit statuses the CI column shows "no access" and a banner names the missing permission; "none" means no CI is configured.
 4. Paste the token on the sign-in screen.
 
 ## Security notes
@@ -29,3 +31,5 @@ Any static host works (e.g. GitHub Pages); there is nothing to build.
 - All API-provided text is inserted via `textContent`; no `innerHTML`.
 - Anyone with access to your browser profile or an XSS on the host origin can read the token; use a short-lived, minimally scoped token and host on an origin you control.
 - Rate limits and API errors are shown in the red banner at the top.
+
+PR/issue bodies and comments are rendered as Markdown by a small built-in renderer (`renderMarkdown` in `app.js`): headings, emphasis, strikethrough, inline/fenced code, blockquotes, lists, task-list checkboxes (read-only), tables, rules, links and autolinks (http/https/mailto only). Images load inline only from github.com, `*.githubusercontent.com` and github.githubassets.com over https (checked with `new URL()`, no userinfo/lookalike hosts; also enforced by the CSP `img-src`); any other host, or an image that fails to load, becomes a link with the alt text, raw HTML is shown as text and `<!-- comments -->` are hidden. Output is built with DOM nodes only, never `innerHTML`.

@@ -16,6 +16,7 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 #userbox{display:flex;gap:.5rem;align-items:center}
 #banner{padding:.6rem 1rem;background:var(--bad);color:#fff}
 #banner.info{background:var(--warn)}
+#permbanner{padding:.4rem 1rem;background:var(--warn);color:#fff;font-size:.9em}
 #loginform{display:flex;gap:.5rem;flex-wrap:wrap}
 #token{flex:1;min-width:220px}
 #tabs{display:flex;gap:.25rem;flex-wrap:wrap;border-bottom:1px solid var(--border)}
@@ -36,11 +37,34 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 .st-success,.st-APPROVED{color:var(--ok)}
 .st-failure,.st-CHANGES_REQUESTED{color:var(--bad)}
 .st-pending,.st-REVIEW_REQUIRED{color:var(--warn)}
+.st-none,.st-unknown{color:#888}
+.st-noaccess{color:var(--warn);text-decoration:underline dotted}
+.st-error{color:var(--bad);text-decoration:underline dotted}
 #detail{border:1px solid var(--border);border-radius:6px;padding:1rem;background:var(--card);overflow-wrap:anywhere}
-.body{white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:.5rem;max-height:20em;overflow:auto}
+.body{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:.5rem;max-height:20em;overflow:auto}
 .comment{border-top:1px solid var(--border);padding:.5rem 0}
 .actions{display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0}
 textarea{width:100%;min-height:5em}
 .files{font-family:ui-monospace,monospace;font-size:.85em;margin:0;padding-left:1.2em}
 .empty{color:var(--muted);padding:1rem}
 #userbox label{display:flex;gap:.3rem;align-items:center}
+.review-note { color: #9a6700; }
+
+.md{overflow-wrap:anywhere}
+.md>:first-child{margin-top:0}.md>:last-child{margin-bottom:0}
+.md p{margin:.4em 0}
+.md .md-h{margin:.8em 0 .3em}
+.md code{font-family:ui-monospace,monospace;font-size:.9em;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:0 .3em}
+.md pre.md-pre{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:.5rem;overflow:auto;margin:.5em 0}
+.md pre.md-pre code{border:0;padding:0;background:none}
+.md blockquote{margin:.5em 0;padding:0 .8em;border-left:3px solid var(--border);color:var(--muted)}
+.md ul,.md ol{margin:.3em 0;padding-left:1.6em}
+.md li>p{margin:0}
+.md li.task{list-style:none;margin-left:-1.2em}
+.md hr{border:0;border-top:1px solid var(--border);margin:.8em 0}
+.md .md-table{overflow:auto;margin:.5em 0}
+.md table{border-collapse:collapse}
+.md th,.md td{border:1px solid var(--border);padding:.25em .6em}
+.md th{background:var(--card)}
+.md img.md-img{max-width:100%;height:auto}
+.md .md-left{text-align:left}.md .md-right{text-align:right}.md .md-center{text-align:center}
