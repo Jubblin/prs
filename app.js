@@ -94,6 +94,14 @@ async function getMe() {
 function safeLink(u) {
   try { const x = new URL(u); return ['http:', 'https:', 'mailto:'].includes(x.protocol) ? x.href : null; } catch { return null; }
 }
+function safeImg(u) {
+  try {
+    const x = new URL(u);
+    if (x.protocol !== 'https:' || x.username || x.password || x.port) return null;
+    const host = x.hostname.toLowerCase();
+    return host === 'github.com' || host === 'github.githubassets.com' || host.endsWith('.githubusercontent.com') ? x.href : null;
+  } catch { return null; }
+}
 const mdLink = (href, kids) => h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, kids);
 
 function mdInline(s, depth = 0) {
@@ -130,8 +138,15 @@ function mdInline(s, depth = 0) {
     if (c === '!' && s[i + 1] === '[' && (m = sticky(R.img, i))) {
       flush();
       const href = safeLink(m[2]);
-      const label = '🖼 ' + (m[1] || m[2]);
-      out.push(href ? mdLink(href, label) : label); i += m[0].length; continue;
+      const alt = m[1] || m[2];
+      const label = '🖼 ' + alt;
+      const src = safeImg(m[2]);
+      if (src) {
+        const img = h('img', { src, alt, loading: 'lazy', referrerpolicy: 'no-referrer', class: 'md-img' });
+        img.addEventListener('error', () => { img.replaceWith(h('a', { href: src, target: '_blank', rel: 'noopener noreferrer' }, label)); }, { once: true });
+        out.push(img);
+      } else out.push(href ? mdLink(href, label) : label);
+      i += m[0].length; continue;
     }
     if (c === '[' && (m = sticky(R.link, i))) {
       flush();
@@ -210,7 +225,7 @@ function mdBlocks(lines, depth = 0) {
       i += 2;
       const rows = [];
       while (i < lines.length && lines[i].trim() && lines[i].includes('|')) rows.push(mdCells(lines[i++]));
-      const cell = (tag, t, k) => h(tag, al[k] ? { style: 'text-align:' + al[k] } : {}, mdInline(t));
+      const cell = (tag, t, k) => h(tag, al[k] ? { class: 'md-' + al[k] } : {}, mdInline(t));
       out.push(h('div', { class: 'md-table' }, h('table', {},
         h('thead', {}, h('tr', {}, head.map((t, k) => cell('th', t, k)))),
         h('tbody', {}, rows.map((r) => h('tr', {}, head.map((_, k) => cell('td', r[k] || '', k))))))));

@@ -66,3 +66,5 @@ textarea{width:100%;min-height:5em}
 .md table{border-collapse:collapse}
 .md th,.md td{border:1px solid var(--border);padding:.25em .6em}
 .md th{background:var(--card)}
+.md img.md-img{max-width:100%;height:auto}
+.md .md-left{text-align:left}.md .md-right{text-align:right}.md .md-center{text-align:center}
