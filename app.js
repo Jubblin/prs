@@ -298,7 +298,7 @@ function signOut() {
 }
 function showView() {
   const on = !!state.token;
-  $('login').hidden = on; $('dash').hidden = !on; $('userbox').hidden = !on;
+  $('login').hidden = on; $('dash').hidden = !on; $('controls').hidden = !on; $('userbox').hidden = !on;
 }
 $('loginform').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -600,4 +600,11 @@ state.token = localStorage.getItem(TOKEN_KEY);
 showView();
 if (state.token) {
   gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; refresh(); }).catch((e) => banner(e.message));
+}
+
+// Keep scroll-padding in sync with the sticky header height.
+{
+  const top = $('top');
+  const sync = () => document.documentElement.style.setProperty('--top-h', top.offsetHeight + 'px');
+  new ResizeObserver(sync).observe(top); sync();
 }
