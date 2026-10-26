@@ -293,7 +293,7 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.me = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  state.token = null; state.me = null; state.data = {}; state.selected = null; state.status.clear(); closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
@@ -344,7 +344,7 @@ async function refresh(auto = false) {
   const token = state.token;
   let results;
   try {
-    results = await Promise.all(TABS.map((t) => loadTab(t).catch((e) => { banner(e.message); return auto === true ? null : []; })));
+    results = await Promise.all(TABS.map((t) => loadTab(t).catch((e) => { banner(e.message); return null; })));
   } finally { $('refresh').disabled = false; state.refreshing = false; }
   if (state.token !== token) return; // signed out meanwhile
   TABS.forEach((t, i) => { if (results[i]) state.data[t.id] = results[i]; });
