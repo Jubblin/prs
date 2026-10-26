@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="top">
   <header>
     <h1>PR Dashboard</h1>
     <div id="userbox" hidden>
@@ -25,6 +26,14 @@
       <button id="signout" type="button">Sign out</button>
     </div>
   </header>
+  <div id="controls" hidden>
+    <nav id="tabs" role="tablist"></nav>
+    <div id="filters">
+      <input id="textfilter" type="search" placeholder="Filter by text">
+      <select id="repofilter"><option value="">All repos</option></select>
+    </div>
+  </div>
+  </div>
 
   <div id="banner" role="alert" hidden></div>
   <div id="permbanner" role="status" hidden></div>
@@ -40,11 +49,6 @@
     </section>
 
     <section id="dash" hidden>
-      <nav id="tabs" role="tablist"></nav>
-      <div id="filters">
-        <input id="textfilter" type="search" placeholder="Filter by text">
-        <select id="repofilter"><option value="">All repos</option></select>
-      </div>
       <div id="layout">
         <ul id="list"></ul>
         <aside id="detail" hidden></aside>
