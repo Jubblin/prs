@@ -61,7 +61,15 @@ async function gh(path, opts = {}) {
   });
   if (res.ok) return res.status === 204 ? null : res.json();
   let msg = '';
-  try { msg = (await res.json()).message || ''; } catch { /* ignore */ }
+  try {
+    const j = await res.json();
+    msg = j.message || '';
+    if (Array.isArray(j.errors) && j.errors.length) {
+      const det = j.errors.map((x) => typeof x === 'string' ? x
+        : x && typeof x === 'object' ? [x.message, x.resource, x.field, x.code].filter(Boolean).join(' ') : String(x)).filter(Boolean).join('; ');
+      if (det) msg += (msg ? ' — ' : '') + det;
+    }
+  } catch { /* ignore */ }
   if (res.status === 401) {
     signOut();
     throw new ApiError('Token rejected (401). Please sign in again.', 401);
@@ -72,6 +80,14 @@ async function gh(path, opts = {}) {
     throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.', 429);
   }
   throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`, res.status);
+}
+
+async function getMe() {
+  if (state.me) return state.me;
+  const token = state.token;
+  const me = (await gh('/user')).login;
+  if (state.token === token) state.me = me;
+  return me;
 }
 
 async function paged(path, max = 100) {
@@ -89,7 +105,7 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  state.token = null; state.me = null; state.data = {}; state.selected = null; state.status.clear(); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
@@ -103,7 +119,7 @@ $('loginform').addEventListener('submit', async (e) => {
   try {
     const me = await gh('/user');
     localStorage.setItem(TOKEN_KEY, state.token);
-    $('username').textContent = me.login;
+    $('username').textContent = me.login; state.me = me.login;
     banner('');
     showView(); refresh();
   } catch (err) {
@@ -308,19 +324,20 @@ async function select(i) {
     const [owner, repo] = repoOf(i).split('/');
     const base = `/repos/${owner}/${repo}`;
     const isPr = !!i.pull_request;
-    const [full, comments, files, st] = await Promise.all([
+    const [full, comments, files, st, me] = await Promise.all([
       gh(`${base}/issues/${i.number}`),
       paged(`${base}/issues/${i.number}/comments`),
       isPr ? paged(`${base}/pulls/${i.number}/files`, 100) : [],
       isPr ? prStatus(i) : null,
+      isPr ? getMe().catch(() => null) : null,
     ]);
     if (st) { state.status.set(i.id, st); permBanner(); }
     if (state.selected !== i.id) return;
-    renderDetail(i, base, full, comments, files, st);
+    renderDetail(i, base, full, comments, files, st, me);
   } catch (e) { banner(e.message); closeDetail(); }
 }
 
-function renderDetail(i, base, full, comments, files, st) {
+function renderDetail(i, base, full, comments, files, st, me) {
   const d = $('detail'); clear(d);
   const isPr = !!i.pull_request;
   const link = safeUrl(full.html_url);
@@ -357,7 +374,7 @@ function renderDetail(i, base, full, comments, files, st) {
       let held = true;
       const release = () => { if (held) { held = false; state.busy--; } };
       try { await fn(); banner(label + ': done', true); release(); await refresh(); if (state.selected === i.id) select(i); }
-      catch (e) { banner(e.message); btns.forEach((x) => { x.disabled = false; }); }
+      catch (e) { banner(e.message); btns.forEach((x) => { x.disabled = x.dataset.locked === '1'; }); }
       finally { release(); scheduleAuto(); }
     } }, label);
     btns.push(b); return b;
@@ -367,10 +384,19 @@ function renderDetail(i, base, full, comments, files, st) {
   const review = (event) => gh(`${base}/pulls/${i.number}/reviews`, { method: 'POST', body: { event, ...(text() ? { body: text() } : {}) } });
   const comment = act('Comment', () => gh(`${base}/issues/${i.number}/comments`, { method: 'POST', body: { body: needText() } }));
   const row = h('div', { class: 'actions' }, comment);
+  let reviewNote = null;
   if (isPr) {
+    const own = !!(me && full.user && full.user.login.toLowerCase() === me.toLowerCase());
+    const isDraft = !!(full.draft || (st && st.pr && st.pr.draft));
+    const noReview = own || full.state !== 'open';
+    const approve = act('Approve', () => review('APPROVE'), 'primary');
+    const reqChanges = act('Request changes', () => { needText(); return review('REQUEST_CHANGES'); }, 'danger');
+    if (noReview) { approve.disabled = true; reqChanges.disabled = true; approve.dataset.locked = reqChanges.dataset.locked = '1'; }
+    reviewNote = own ? 'GitHub does not allow approving your own PR'
+      : full.state !== 'open' ? 'This PR is closed or merged, so it cannot be reviewed'
+      : isDraft ? 'This PR is a draft; reviews may be rejected until it is ready' : null;
     row.append(
-      act('Approve', () => review('APPROVE'), 'primary'),
-      act('Request changes', () => { needText(); return review('REQUEST_CHANGES'); }, 'danger'),
+      approve, reqChanges,
       act('Merge', async () => {
         if (!confirm(`Merge ${repoOf(i)}#${i.number}?\n\n${full.title}`)) throw new ApiError('Merge cancelled.');
         await gh(`${base}/pulls/${i.number}/merge`, { method: 'PUT', body: { merge_method: 'merge' } });
@@ -378,12 +404,12 @@ function renderDetail(i, base, full, comments, files, st) {
   }
   const closed = full.state === 'closed';
   row.append(act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : ''));
-  d.append(h('h3', {}, 'Actions'), ta, row);
+  d.append(h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
 }
 
 // ---- init ----
 state.token = localStorage.getItem(TOKEN_KEY);
 showView();
 if (state.token) {
-  gh('/user').then((me) => { $('username').textContent = me.login; refresh(); }).catch((e) => banner(e.message));
+  gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; refresh(); }).catch((e) => banner(e.message));
 }
