@@ -35,7 +35,7 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 #list li{border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin-bottom:.5rem;cursor:pointer;background:var(--card)}
 #list li:hover,#list li.sel{border-color:var(--accent)}
 .row-title{font-weight:600}
-.meta{color:var(--muted);font-size:.9em;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
+.meta{min-height:1.5em;color:var(--muted);font-size:.9em;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
 .label{border:1px solid var(--border);border-radius:1em;padding:0 .5em;font-size:.8em}
 .st-success,.st-APPROVED{color:var(--ok)}
 .st-failure,.st-CHANGES_REQUESTED{color:var(--bad)}
@@ -83,3 +83,4 @@ h1{font-size:1rem}
 main{padding:.5rem}
 #detail{position:static;max-height:none;overflow:visible}
 }
+.st-loading{opacity:.5}
