@@ -425,8 +425,9 @@ function bulkReason(i) {
   return null;
 }
 function pruneSelection() {
-  const cur = new Map((state.data[state.tab] || []).map((i) => [i.id, i]));
-  for (const id of [...state.sel]) { const i = cur.get(id); if (!i || bulkReason(i)) state.sel.delete(id); }
+  // The selection only ever holds PRs that are currently visible (tab + text/repo filters) and approvable.
+  const cur = new Set(visibleItems().filter((i) => !bulkReason(i)).map((i) => i.id));
+  for (const id of [...state.sel]) if (!cur.has(id)) state.sel.delete(id);
 }
 function renderToolbar() {
   const bar = $('bulkbar'), n = state.sel.size, show = n > 0 && !!(TABS.find((t) => t.id === state.tab) || {}).pr;
@@ -654,19 +655,19 @@ const ROW_STATUS = { pending: ['pending', 'st-pending'], running: ['approving…
 function paintRow(r) {
   const [label, cls] = ROW_STATUS[r.status];
   r.el.className = 'bulk-status ' + cls;
-  r.el.textContent = label + (r.msg ? ': ' + r.msg : '');
+  r.el.textContent = label + (r.msg ? ': ' + r.msg : '') + (r.tries > 1 ? ` (attempt ${r.tries})` : '');
 }
 function openBulk() {
   if (bulkOpen() || state.busy > 0) return;
   const items = visibleSelected();
   if (!items.length) return;
-  bulk = { rows: items.map((item) => ({ item, status: 'pending', msg: '', el: null })), phase: 'confirm', comment: '', note: '', returnFocus: document.activeElement,
+  bulk = { rows: items.map((item) => ({ item, status: 'pending', msg: '', el: null, tries: 0, round: 0, prev: null })), phase: 'confirm', round: 0, retried: 0, comment: '', note: '', returnFocus: document.activeElement,
     ta: h('textarea', { id: 'bulkcomment', placeholder: 'Optional comment, added to every approval', 'aria-label': 'Optional shared comment' }) };
   $('bulkoverlay').hidden = false;
   renderBulk();
 }
 function visibleSelected() {
-  return (state.data[state.tab] || []).filter((i) => state.sel.has(i.id) && !bulkReason(i));
+  return visibleItems().filter((i) => state.sel.has(i.id) && !bulkReason(i));
 }
 function closeBulk() {
   if (!bulk || bulk.phase === 'running') return;
@@ -696,15 +697,20 @@ function renderBulk() {
   if (ph === 'confirm') {
     d.append(h('p', { class: 'meta' }, 'Each PR gets an APPROVE review. This cannot be undone from here.'), bulk.ta);
     const cancel = h('button', { type: 'button', id: 'bulkcancel', onclick: closeBulk }, 'Cancel');
-    btns.append(cancel, h('button', { type: 'button', id: 'bulkconfirm', class: 'primary', onclick: () => { bulk.comment = bulk.ta.value.trim(); runBulk(bulk.rows); } }, `Confirm: approve ${n}`));
+    btns.append(cancel, h('button', { type: 'button', id: 'bulkconfirm', class: 'primary', onclick: () => { if (bulk.phase !== 'confirm') return; bulk.comment = bulk.ta.value.trim(); runBulk(bulk.rows); } }, `Confirm: approve ${n}`));
     focus = cancel;
   } else if (ph === 'done') {
-    const summary = `${ok} approved, ${failed} failed` + (skipped ? `, ${skipped} not attempted` : '');
+    let summary = `${ok} approved, ${failed} failed` + (skipped ? `, ${skipped} not attempted` : '');
+    if (bulk.round > 1) {
+      const mine = bulk.rows.filter((r) => r.round === bulk.round);
+      summary += ` (retry round ${bulk.round}: ${mine.filter((r) => r.status === 'done').length} approved, ${mine.filter((r) => r.status === 'failed').length} failed, ${bulk.retried - mine.length} not retried)`;
+    }
     d.append(h('p', { id: 'bulksummary', role: 'status', class: failed || skipped ? 'bulk-bad' : 'bulk-good' }, summary), bulk.note ? h('p', { class: 'bulk-bad' }, bulk.note) : null);
     if (failed || skipped) btns.append(h('button', { type: 'button', id: 'bulkretry', onclick: () => {
+      if (bulk.phase !== 'done') return;
       const again = bulk.rows.filter((r) => r.status === 'failed' || r.status === 'skipped');
-      for (const r of again) { r.status = 'pending'; r.msg = ''; }
-      bulk.note = ''; runBulk(again);
+      for (const r of again) { r.prev = { status: r.status, msg: r.msg }; r.status = 'pending'; r.msg = ''; }
+      bulk.note = ''; bulk.retried = again.length; runBulk(again);
     } }, skipped ? 'Retry failed and not attempted' : 'Retry failed'));
     const close = h('button', { type: 'button', id: 'bulkclose', onclick: closeBulk }, 'Close');
     btns.append(close);
@@ -716,6 +722,8 @@ function renderBulk() {
   focus.focus();
 }
 async function runBulk(rows) {
+  if (bulk.phase === 'running') return;
+  bulk.round++; if (bulk.round === 1) bulk.retried = rows.length;
   bulk.phase = 'running'; renderBulk();
   state.busy++;
   const token = state.token;
@@ -723,8 +731,12 @@ async function runBulk(rows) {
   try {
     for (const r of rows) {
       if (!stop && Date.now() < state.rateLimitUntil) stop = 'Rate limit active until ' + new Date(state.rateLimitUntil).toLocaleTimeString() + '.';
-      if (stop) { r.status = 'skipped'; paintRow(r); continue; }
-      r.status = 'running'; paintRow(r);
+      if (stop) {
+        // Not tried this round: a row that already failed keeps its status and reason.
+        if (r.prev) { r.status = r.prev.status; r.msg = r.prev.msg; } else r.status = 'skipped';
+        paintRow(r); continue;
+      }
+      r.status = 'running'; r.tries++; r.round = bulk.round; r.prev = null; paintRow(r);
       const [owner, repo] = repoOf(r.item).split('/');
       try {
         await gh(`/repos/${owner}/${repo}/pulls/${r.item.number}/reviews`, { method: 'POST', body: { event: 'APPROVE', ...(bulk.comment ? { body: bulk.comment } : {}) } });
