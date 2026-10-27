@@ -8,6 +8,14 @@ The lists refresh automatically every 5 minutes; change the interval (Off, 2, 5,
 
 Approve and Request changes are disabled (with an explanation) on your own PRs and on closed/merged PRs, since GitHub rejects those with a 422; drafts show a note. Any API error now includes GitHub's detailed reasons.
 
+## Bulk approve
+
+On the PR tabs each row has a checkbox. Once at least one PR is ticked, a toolbar appears under the filters showing the count with **Select all visible**, **Clear** and **Approve selected**. Selection survives refreshes (keyed by PR id) but only ever contains PRs that are currently visible: changing the text or repo filter, or a refresh removing a row, drops hidden PRs from the selection (they are not re-selected when the filter is cleared), is cleared when you switch tab or sign out, and ticking a box does not open the detail panel.
+
+Your own PRs, closed/merged PRs and drafts cannot be selected; the disabled checkbox's tooltip (and the row) says why.
+
+**Approve selected** opens a confirmation dialog listing every `repo#number` and title, with an optional comment shared by all approvals. Focus starts on Cancel and nothing is sent until you click **Confirm**; the dialog traps focus and `Esc` cancels (not while running). PRs are approved one at a time (`POST /pulls/{n}/reviews`, `event=APPROVE`) with per-PR progress. A failure (e.g. a 422 or 403, shown with GitHub's own reason) does not stop the rest; a 401 or a rate limit stops the batch and says so, leaving the remaining PRs "not attempted". The summary reads "N approved, M failed" and **Retry failed** re-runs only the failures (earlier failure reasons are kept if a retry is blocked by a rate limit; the summary also reports the retry round separately). Auto-refresh is held off during the batch and statuses are refreshed once at the end. There is deliberately no keyboard shortcut for bulk approve.
+
 ## Keyboard shortcuts
 
 Press `?` in the app for the same list. Shortcuts are ignored while typing in a field, when Ctrl/Alt/Meta is held, and (except `Esc` / `?`) while the help overlay is open. There is deliberately no approve/merge shortcut.

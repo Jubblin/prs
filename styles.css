@@ -92,3 +92,17 @@ main{padding:.5rem}
 #help dt{white-space:nowrap}
 #help dd{margin:0}
 kbd{font-family:ui-monospace,monospace;font-size:.85em;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:0 .35em}
+#bulkbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.5rem 0;padding:.3rem .5rem;background:var(--card);border:1px solid var(--accent);border-radius:6px}
+#bulkbar[hidden]{display:none}
+#bulkcount{font-weight:600;margin-right:auto}
+label.bulk{display:inline-block;margin-right:.5rem;cursor:pointer}
+label.bulk:has(input:disabled){cursor:not-allowed}
+.bulk-why{font-style:italic}
+#bulkoverlay{position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+#bulkoverlay[hidden]{display:none}
+#bulk{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:1rem 1.25rem;width:min(40rem,92vw);max-height:90vh;overflow:auto}
+.bulk-list{list-style:none;margin:.5rem 0;padding:0;max-height:40vh;overflow:auto;border:1px solid var(--border);border-radius:6px}
+.bulk-list li{padding:.3rem .6rem;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+.bulk-list li:last-child{border-bottom:0}
+.bulk-pr{font-weight:600}
+.bulk-bad{color:var(--bad)}.bulk-good{color:var(--ok)}

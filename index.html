@@ -32,6 +32,12 @@
       <input id="textfilter" type="search" placeholder="Filter by text">
       <select id="repofilter"><option value="">All repos</option></select>
     </div>
+    <div id="bulkbar" role="toolbar" aria-label="Bulk approve" hidden>
+      <span id="bulkcount" role="status"></span>
+      <button id="bulkall" type="button">Select all visible</button>
+      <button id="bulkclear" type="button">Clear</button>
+      <button id="bulkapprove" type="button" class="primary">Approve selected</button>
+    </div>
   </div>
   </div>
 
@@ -71,6 +77,9 @@
       </dl>
       <button id="helpclose" type="button">Close</button>
     </div>
+  </div>
+  <div id="bulkoverlay" hidden>
+    <div id="bulk" role="dialog" aria-modal="true" aria-labelledby="bulktitle" tabindex="-1"></div>
   </div>
   <script type="module" src="app.js"></script>
 </body>
