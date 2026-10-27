@@ -55,6 +55,23 @@
       </div>
     </section>
   </main>
+  <div id="helpoverlay" hidden>
+    <div id="help" role="dialog" aria-modal="true" aria-labelledby="helptitle" tabindex="-1">
+      <h2 id="helptitle">Keyboard shortcuts</h2>
+      <dl>
+        <dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Switch tab</dd>
+        <dt><kbd>j</kbd> / <kbd>↓</kbd></dt><dd>Next row</dd>
+        <dt><kbd>k</kbd> / <kbd>↑</kbd></dt><dd>Previous row</dd>
+        <dt><kbd>Enter</kbd> / <kbd>o</kbd></dt><dd>Open detail panel</dd>
+        <dt><kbd>g</kbd></dt><dd>Open on GitHub (new tab)</dd>
+        <dt><kbd>r</kbd></dt><dd>Refresh</dd>
+        <dt><kbd>/</kbd></dt><dd>Focus text filter</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Close detail panel / leave filter / close this help</dd>
+        <dt><kbd>?</kbd></dt><dd>Show / hide this help</dd>
+      </dl>
+      <button id="helpclose" type="button">Close</button>
+    </div>
+  </div>
   <script type="module" src="app.js"></script>
 </body>
 </html>
