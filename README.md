@@ -8,6 +8,21 @@ The lists refresh automatically every 5 minutes; change the interval (Off, 2, 5,
 
 Approve and Request changes are disabled (with an explanation) on your own PRs and on closed/merged PRs, since GitHub rejects those with a 422; drafts show a note. Any API error now includes GitHub's detailed reasons.
 
+## Keyboard shortcuts
+
+Press `?` in the app for the same list. Shortcuts are ignored while typing in a field, when Ctrl/Alt/Meta is held, and (except `Esc` / `?`) while the help overlay is open. There is deliberately no approve/merge shortcut.
+
+| Key | Action |
+| --- | --- |
+| `1`–`5` | Switch tab |
+| `j` / `↓`, `k` / `↑` | Move the selected row down / up |
+| `Enter` or `o` | Open the selected item's detail panel |
+| `g` | Open the selected item on GitHub (new tab) |
+| `r` | Refresh (ignored while a refresh/action is in flight or rate-limited) |
+| `/` | Focus the text filter |
+| `Esc` | Close the detail panel, or leave the filter box |
+| `?` | Show / hide the help overlay |
+
 ## Run locally
 
 ```sh

@@ -84,3 +84,11 @@ main{padding:.5rem}
 #detail{position:static;max-height:none;overflow:visible}
 }
 .st-loading{opacity:.5}
+#list li.cur{outline:2px solid var(--accent);outline-offset:1px}
+#helpoverlay{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+#helpoverlay[hidden]{display:none}
+#help{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:1rem 1.25rem;max-width:min(30rem,92vw);max-height:90vh;overflow:auto}
+#help dl{display:grid;grid-template-columns:auto 1fr;gap:.3rem 1rem;margin:.5rem 0 1rem}
+#help dt{white-space:nowrap}
+#help dd{margin:0}
+kbd{font-family:ui-monospace,monospace;font-size:.85em;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:0 .35em}

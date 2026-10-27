@@ -13,7 +13,7 @@ const TABS = [
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
 ];
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
 function loadAuto() {
   const v = localStorage.getItem(AUTO_KEY);
   return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
@@ -383,12 +383,16 @@ $('autorefresh').addEventListener('change', () => {
   scheduleAuto();
 });
 
+function setTab(id) {
+  state.tab = id; localStorage.setItem(TAB_KEY, id); state.selected = null; state.cursor = null; closeDetail(); renderTabs(); renderRepos(); renderList();
+}
+
 function renderTabs() {
   const nav = $('tabs'); clear(nav);
   for (const t of TABS) {
     nav.append(h('button', {
       role: 'tab', type: 'button', 'aria-selected': String(t.id === state.tab),
-      onclick: () => { state.tab = t.id; localStorage.setItem(TAB_KEY, t.id); state.selected = null; closeDetail(); renderTabs(); renderRepos(); renderList(); },
+      onclick: () => setTab(t.id),
     }, t.label, h('span', { class: 'count' }, (state.data[t.id] || []).length)));
   }
 }
@@ -406,16 +410,19 @@ function renderList() {
   buildList(ul);
   window.scrollTo(x, y); detail.scrollTop = dy; ul.scrollTop = ly;
 }
+function visibleItems() {
+  const q = $('textfilter').value.toLowerCase(), repo = $('repofilter').value;
+  return (state.data[state.tab] || []).filter((i) =>
+    (!repo || repoOf(i) === repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
+}
 function buildList(ul) {
   clear(ul);
-  const q = $('textfilter').value.toLowerCase(), repo = $('repofilter').value;
-  const items = (state.data[state.tab] || []).filter((i) =>
-    (!repo || repoOf(i) === repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
+  const items = visibleItems();
   if (!items.length) { ul.append(h('li', { class: 'empty' }, 'Nothing here.')); return; }
   for (const i of items) {
     const st = state.status.get(i.id);
     const link = safeUrl(i.html_url);
-    ul.append(h('li', { class: state.selected === i.id ? 'sel' : '', tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter') select(i); } },
+    ul.append(h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter') select(i); } },
       h('div', { class: 'row-title' }, i.title),
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
@@ -508,7 +515,7 @@ async function loadPrStatuses() {
 function closeDetail() { $('detail').hidden = true; $('layout').classList.remove('open'); }
 
 async function select(i) {
-  state.selected = i.id;
+  state.selected = i.id; state.cursor = i.id;
   renderList();
   const d = $('detail'); clear(d);
   d.hidden = false; $('layout').classList.add('open');
@@ -599,6 +606,55 @@ function renderDetail(i, base, full, comments, files, st, me) {
   row.append(act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : ''));
   d.append(h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
 }
+
+// ---- keyboard shortcuts ----
+const isTyping = (el) => !!el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable);
+const helpOpen = () => !$('helpoverlay').hidden;
+let helpReturn = null;
+function showHelp(on) {
+  $('helpoverlay').hidden = !on;
+  if (on) { helpReturn = document.activeElement; $('helpclose').focus(); }
+  else { if ($('help').contains(document.activeElement)) document.activeElement.blur(); if (helpReturn && helpReturn.isConnected) helpReturn.focus(); helpReturn = null; }
+}
+$('helpclose').addEventListener('click', () => showHelp(false));
+$('helpoverlay').addEventListener('click', (e) => { if (e.target === $('helpoverlay')) showHelp(false); });
+
+function moveCursor(delta) {
+  const items = visibleItems();
+  if (!items.length) return;
+  const at = items.findIndex((i) => i.id === state.cursor);
+  const next = at < 0 ? (delta > 0 ? 0 : items.length - 1) : Math.min(items.length - 1, Math.max(0, at + delta));
+  state.cursor = items[next].id;
+  renderList();
+  const row = $('list').querySelector('li.cur');
+  if (row) row.scrollIntoView({ block: 'nearest' }); // honours html scroll-padding-top (sticky header)
+}
+const cursorItem = () => visibleItems().find((i) => i.id === state.cursor);
+
+document.addEventListener('keydown', (e) => {
+  if (!state.token || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+  const k = e.key;
+  if (helpOpen()) {
+    if (k === 'Escape' || k === '?') { e.preventDefault(); showHelp(false); }
+    else if (k === 'Tab') { e.preventDefault(); $('helpclose').focus(); }
+    return;
+  }
+  if (k === 'Escape') {
+    if (e.target === $('textfilter')) { e.preventDefault(); $('textfilter').blur(); }
+    else if (!isTyping(e.target) && !$('detail').hidden) { e.preventDefault(); closeDetail(); state.selected = null; renderList(); }
+    return;
+  }
+  if (isTyping(e.target)) return;
+  const n = /^[1-9]$/.test(k) ? Number(k) : 0;
+  if (n && n <= TABS.length) { e.preventDefault(); setTab(TABS[n - 1].id); }
+  else if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
+  else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
+  else if (k === 'o' || (k === 'Enter' && e.target === document.body)) { const i = cursorItem(); if (i) { e.preventDefault(); select(i); } }
+  else if (k === 'g') { const i = cursorItem(), u = i && safeUrl(i.html_url); if (u) { e.preventDefault(); window.open(u, '_blank', 'noopener'); } }
+  else if (k === 'r') { e.preventDefault(); if (!autoBlocked()) refresh(); }
+  else if (k === '/') { e.preventDefault(); $('textfilter').focus(); }
+  else if (k === '?') { e.preventDefault(); showHelp(true); }
+});
 
 // ---- init ----
 state.token = localStorage.getItem(TOKEN_KEY);
