@@ -13,7 +13,7 @@ const TABS = [
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
 ];
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
 function loadAuto() {
   const v = localStorage.getItem(AUTO_KEY);
   return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
@@ -293,7 +293,7 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.me = null; state.data = {}; state.selected = null; state.status.clear(); closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
@@ -384,7 +384,7 @@ $('autorefresh').addEventListener('change', () => {
 });
 
 function setTab(id) {
-  state.tab = id; localStorage.setItem(TAB_KEY, id); state.selected = null; state.cursor = null; closeDetail(); renderTabs(); renderRepos(); renderList();
+  state.tab = id; localStorage.setItem(TAB_KEY, id); state.selected = null; state.cursor = null; state.sel.clear(); closeDetail(); renderTabs(); renderRepos(); renderList();
 }
 
 function renderTabs() {
@@ -415,21 +415,59 @@ function visibleItems() {
   return (state.data[state.tab] || []).filter((i) =>
     (!repo || repoOf(i) === repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
 }
+// Why a PR cannot be bulk-approved (null = it can). Search results carry user/state/draft.
+function bulkReason(i) {
+  if (!i.pull_request) return 'Not a pull request';
+  if (state.me && i.user && i.user.login.toLowerCase() === state.me.toLowerCase()) return 'Your own PR: GitHub does not allow approving it';
+  if (i.state !== 'open') return 'Closed or merged: cannot be reviewed';
+  if (i.draft) return 'Draft: not ready for review';
+  if (!state.me) return 'Signed-in user not known yet';
+  return null;
+}
+function pruneSelection() {
+  const cur = new Map((state.data[state.tab] || []).map((i) => [i.id, i]));
+  for (const id of [...state.sel]) { const i = cur.get(id); if (!i || bulkReason(i)) state.sel.delete(id); }
+}
+function renderToolbar() {
+  const bar = $('bulkbar'), n = state.sel.size, show = n > 0 && !!(TABS.find((t) => t.id === state.tab) || {}).pr;
+  const top = $('top'), before = top.offsetHeight, wasHidden = bar.hidden;
+  bar.hidden = !show;
+  $('bulkcount').textContent = n + ' selected';
+  if (wasHidden !== bar.hidden && window.scrollY > 0) window.scrollBy(0, top.offsetHeight - before); // keep rows still
+}
+function toggleSel(i, on) {
+  if (on && !bulkReason(i)) state.sel.add(i.id); else state.sel.delete(i.id);
+  renderToolbar();
+}
+$('bulkclear').addEventListener('click', () => { state.sel.clear(); renderList(); renderToolbar(); });
+$('bulkall').addEventListener('click', () => {
+  for (const i of visibleItems()) if (!bulkReason(i)) state.sel.add(i.id);
+  renderList(); renderToolbar();
+});
+$('bulkapprove').addEventListener('click', openBulk);
+
 function buildList(ul) {
   clear(ul);
+  pruneSelection(); renderToolbar();
   const items = visibleItems();
   if (!items.length) { ul.append(h('li', { class: 'empty' }, 'Nothing here.')); return; }
   for (const i of items) {
     const st = state.status.get(i.id);
     const link = safeUrl(i.html_url);
-    ul.append(h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter') select(i); } },
-      h('div', { class: 'row-title' }, i.title),
+    const reason = i.pull_request ? bulkReason(i) : null;
+    const where = `${repoOf(i)}#${i.number}`;
+    const bulk = i.pull_request ? h('label', { class: 'bulk', title: reason || 'Select for bulk approve', onclick: (e) => e.stopPropagation() },
+      h('input', { type: 'checkbox', 'aria-label': reason ? `${where} cannot be selected. ${reason}` : `Select ${where} for bulk approve`, disabled: !!reason, checked: !reason && state.sel.has(i.id),
+        onchange: (e) => toggleSel(i, e.target.checked) })) : null;
+    ul.append(h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT') select(i); } },
+      h('div', { class: 'row-title' }, bulk, i.title),
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
         ...i.labels.map((l) => h('span', { class: 'label' }, l.name)),
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
         i.pull_request ? h('span', { class: st ? 'st-' + st.ci : 'st-loading', title: (st && st.ciTip) || null }, 'CI: ' + (st ? ciLabel(st.ci) : '…')) : null,
         i.pull_request ? h('span', { class: st ? 'st-' + st.review : 'st-loading' }, 'Review: ' + (st ? st.review : '…')) : null,
+        reason ? h('span', { class: 'bulk-why' }, 'Not selectable: ' + reason) : null,
         link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer', onclick: (e) => e.stopPropagation() }, 'GitHub ↗') : null)));
   }
 }
@@ -607,8 +645,119 @@ function renderDetail(i, base, full, comments, files, st, me) {
   d.append(h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
 }
 
+// ---- bulk approve ----
+// bulk = { rows: [{ item, status: pending|running|done|failed|skipped, msg, el }], phase: confirm|running|done, comment, note, ta, returnFocus }
+let bulk = null;
+const bulkOpen = () => !$('bulkoverlay').hidden;
+const rowWhere = (r) => `${repoOf(r.item)}#${r.item.number}`;
+const ROW_STATUS = { pending: ['pending', 'st-pending'], running: ['approving…', 'st-pending'], done: ['approved', 'st-success'], failed: ['failed', 'st-failure'], skipped: ['not attempted', 'st-none'] };
+function paintRow(r) {
+  const [label, cls] = ROW_STATUS[r.status];
+  r.el.className = 'bulk-status ' + cls;
+  r.el.textContent = label + (r.msg ? ': ' + r.msg : '');
+}
+function openBulk() {
+  if (bulkOpen() || state.busy > 0) return;
+  const items = visibleSelected();
+  if (!items.length) return;
+  bulk = { rows: items.map((item) => ({ item, status: 'pending', msg: '', el: null })), phase: 'confirm', comment: '', note: '', returnFocus: document.activeElement,
+    ta: h('textarea', { id: 'bulkcomment', placeholder: 'Optional comment, added to every approval', 'aria-label': 'Optional shared comment' }) };
+  $('bulkoverlay').hidden = false;
+  renderBulk();
+}
+function visibleSelected() {
+  return (state.data[state.tab] || []).filter((i) => state.sel.has(i.id) && !bulkReason(i));
+}
+function closeBulk() {
+  if (!bulk || bulk.phase === 'running') return;
+  $('bulkoverlay').hidden = true;
+  const back = bulk.returnFocus; bulk = null;
+  clear($('bulk'));
+  renderList(); renderToolbar();
+  const target = back && back.isConnected && !back.closest('[hidden]') ? back : document.body;
+  if (target !== document.body) target.focus();
+}
+function renderBulk() {
+  const d = $('bulk'); clear(d);
+  const n = bulk.rows.length, ph = bulk.phase;
+  const ok = bulk.rows.filter((r) => r.status === 'done').length;
+  const failed = bulk.rows.filter((r) => r.status === 'failed').length;
+  const skipped = bulk.rows.filter((r) => r.status === 'skipped').length;
+  d.append(h('h2', { id: 'bulktitle' }, ph === 'confirm' ? `Approve ${n} pull request${n === 1 ? '' : 's'}?` : ph === 'running' ? 'Approving…' : 'Bulk approve finished'));
+  const ul = h('ul', { class: 'bulk-list' });
+  for (const r of bulk.rows) {
+    r.el = h('span', {});
+    if (ph !== 'confirm') paintRow(r);
+    ul.append(h('li', {}, h('span', { class: 'bulk-pr' }, rowWhere(r) + ' '), r.item.title, ' ', r.el));
+  }
+  d.append(ul);
+  const btns = h('div', { class: 'actions' });
+  let focus = d;
+  if (ph === 'confirm') {
+    d.append(h('p', { class: 'meta' }, 'Each PR gets an APPROVE review. This cannot be undone from here.'), bulk.ta);
+    const cancel = h('button', { type: 'button', id: 'bulkcancel', onclick: closeBulk }, 'Cancel');
+    btns.append(cancel, h('button', { type: 'button', id: 'bulkconfirm', class: 'primary', onclick: () => { bulk.comment = bulk.ta.value.trim(); runBulk(bulk.rows); } }, `Confirm: approve ${n}`));
+    focus = cancel;
+  } else if (ph === 'done') {
+    const summary = `${ok} approved, ${failed} failed` + (skipped ? `, ${skipped} not attempted` : '');
+    d.append(h('p', { id: 'bulksummary', role: 'status', class: failed || skipped ? 'bulk-bad' : 'bulk-good' }, summary), bulk.note ? h('p', { class: 'bulk-bad' }, bulk.note) : null);
+    if (failed || skipped) btns.append(h('button', { type: 'button', id: 'bulkretry', onclick: () => {
+      const again = bulk.rows.filter((r) => r.status === 'failed' || r.status === 'skipped');
+      for (const r of again) { r.status = 'pending'; r.msg = ''; }
+      bulk.note = ''; runBulk(again);
+    } }, skipped ? 'Retry failed and not attempted' : 'Retry failed'));
+    const close = h('button', { type: 'button', id: 'bulkclose', onclick: closeBulk }, 'Close');
+    btns.append(close);
+    focus = close;
+  } else {
+    d.append(h('p', { class: 'meta', role: 'status' }, 'Working… please keep this window open.'));
+  }
+  d.append(btns);
+  focus.focus();
+}
+async function runBulk(rows) {
+  bulk.phase = 'running'; renderBulk();
+  state.busy++;
+  const token = state.token;
+  let stop = '';
+  try {
+    for (const r of rows) {
+      if (!stop && Date.now() < state.rateLimitUntil) stop = 'Rate limit active until ' + new Date(state.rateLimitUntil).toLocaleTimeString() + '.';
+      if (stop) { r.status = 'skipped'; paintRow(r); continue; }
+      r.status = 'running'; paintRow(r);
+      const [owner, repo] = repoOf(r.item).split('/');
+      try {
+        await gh(`/repos/${owner}/${repo}/pulls/${r.item.number}/reviews`, { method: 'POST', body: { event: 'APPROVE', ...(bulk.comment ? { body: bulk.comment } : {}) } });
+        r.status = 'done'; r.msg = ''; state.sel.delete(r.item.id);
+      } catch (e) {
+        r.status = 'failed'; r.msg = e.message;
+        if (e.status === 401) stop = 'Your token was rejected (401), so the batch was stopped and you were signed out. Sign in again and retry.';
+        else if (e.status === 429 || (e.status === 403 && /rate limit/i.test(e.message))) stop = 'GitHub rate limit reached, so the batch was stopped: ' + e.message;
+      }
+      paintRow(r);
+    }
+  } finally { state.busy--; }
+  bulk.note = stop; bulk.phase = 'done';
+  renderBulk();
+  if (state.token === token) { await refresh(); }
+  scheduleAuto();
+}
+$('bulkoverlay').addEventListener('click', (e) => { if (e.target === $('bulkoverlay')) closeBulk(); });
+$('bulkoverlay').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); closeBulk(); return; }
+  if (e.key !== 'Tab') return;
+  const f = [...$('bulk').querySelectorAll('button:not(:disabled), textarea')];
+  if (!f.length) { e.preventDefault(); $('bulk').focus(); return; }
+  const at = f.indexOf(document.activeElement);
+  if (e.shiftKey && at <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+  else if (!e.shiftKey && at === f.length - 1) { e.preventDefault(); f[0].focus(); }
+});
+document.addEventListener('focusin', (e) => {
+  if (bulkOpen() && !$('bulkoverlay').contains(e.target)) { const f = $('bulk').querySelector('button:not(:disabled), textarea'); (f || $('bulk')).focus(); }
+});
+
 // ---- keyboard shortcuts ----
-const isTyping = (el) => !!el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable);
+const isTyping = (el) => !!el && ((['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) && el.type !== 'checkbox') || el.isContentEditable);
 const helpOpen = () => !$('helpoverlay').hidden;
 let helpReturn = null;
 function showHelp(on) {
@@ -632,7 +781,7 @@ function moveCursor(delta) {
 const cursorItem = () => visibleItems().find((i) => i.id === state.cursor);
 
 document.addEventListener('keydown', (e) => {
-  if (!state.token || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!state.token || bulkOpen() || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
   const k = e.key;
   if (helpOpen()) {
     if (k === 'Escape' || k === '?') { e.preventDefault(); showHelp(false); }
