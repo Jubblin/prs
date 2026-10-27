@@ -397,12 +397,26 @@ function renderTabs() {
   }
 }
 
+const ownerOf = (i) => repoOf(i).split('/')[0];
+// Filter values: '' = all, 'owner/repo' = one repo, 'owner/' = every repo of that user/organization.
+function repoMatches(i, f) { return !f || (f.endsWith('/') ? ownerOf(i) === f.slice(0, -1) : repoOf(i) === f); }
 function renderRepos() {
   const sel = $('repofilter');
-  const repos = [...new Set((state.data[state.tab] || []).map(repoOf))].sort();
+  const byOwner = new Map();
+  for (const r of new Set((state.data[state.tab] || []).map(repoOf))) {
+    const o = r.split('/')[0];
+    if (!byOwner.has(o)) byOwner.set(o, []);
+    byOwner.get(o).push(r);
+  }
+  const values = [];
   clear(sel);
-  sel.append(h('option', { value: '' }, 'All repos'), ...repos.map((r) => h('option', { value: r }, r)));
-  sel.value = repos.includes(state.repo) ? state.repo : '';
+  sel.append(h('option', { value: '' }, 'All repos'));
+  for (const o of [...byOwner.keys()].sort((x, y) => x.toLowerCase().localeCompare(y.toLowerCase()))) {
+    const repos = byOwner.get(o).sort();
+    values.push(o + '/', ...repos);
+    sel.append(h('optgroup', { label: o }, h('option', { value: o + '/' }, `All of ${o}`), ...repos.map((r) => h('option', { value: r }, r.slice(o.length + 1)))));
+  }
+  sel.value = values.includes(state.repo) ? state.repo : '';
 }
 
 function renderList() {
@@ -413,7 +427,7 @@ function renderList() {
 function visibleItems() {
   const q = $('textfilter').value.toLowerCase(), repo = $('repofilter').value;
   return (state.data[state.tab] || []).filter((i) =>
-    (!repo || repoOf(i) === repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
+    repoMatches(i, repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
 }
 // Why a PR cannot be bulk-approved (null = it can). Search results carry user/state/draft.
 function bulkReason(i) {
