@@ -139,7 +139,7 @@ Reproduce with DevTools request blocking/overrides, a read-only token, or a toke
 - [ ] Changing the filter drops hidden PRs and they are not re-selected; tab switch and sign-out clear the selection.
 - [ ] Dialog lists every PR, focus starts on Cancel, Tab stays inside, `Esc` cancels, clicking outside cancels; nothing sent until Confirm.
 - [ ] Approvals run one at a time with progress; shared comment is on every review.
-- [ ] One failure (e.g. a PR you authored slipped in, or a 422) does not stop the rest; summary "N approved, M failed"; Retry failed re-runs only those.
+- [ ] One failure (e.g. a PR you authored slipped in, or a 422) does not stop the rest; summary "N approved, M failed"; Retry failed re-runs only the failed (and not-attempted) ones.
 - [ ] Rate limit or 401 mid-batch stops it; remainder "not attempted".
 
 ### Layout

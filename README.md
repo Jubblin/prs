@@ -60,7 +60,7 @@ Click a row (or `Enter` / `o`) to open the detail panel: title, author, state, l
 
 ### CI and review status
 
-Fetched lazily for every PR on the PR tabs (4 requests in parallel) and shown as `CI: …` and `Review: …` in the list and detail.
+Fetched in the background after each refresh for every PR on the PR tabs (4 PRs at a time) and shown as `CI: …` and `Review: …` in the list and detail.
 
 - **CI**: `success`, `failure`, `pending` (combined from check runs and legacy commit statuses; any failure wins, then pending), `none` (no CI configured), `no access` (the token lacks Checks / Commit statuses read; a banner names the permission), `error` (request failed; hover for the reason), `…` while loading.
 - **Review**: `APPROVED`, `CHANGES_REQUESTED` (takes priority), `REVIEW_REQUIRED`, or `unknown` if reviews could not be read. Based on each reviewer's latest non-comment review.
@@ -93,7 +93,7 @@ On the PR tabs each row has a checkbox. Once at least one is ticked, a toolbar u
 - Own PRs, closed/merged PRs and drafts cannot be selected; the tooltip and row say why.
 - The selection only holds PRs that are currently visible: changing the text or repo filter, or a refresh removing a row, drops hidden PRs (they are not re-selected when the filter is cleared). It is cleared on tab switch and sign out. Ticking a box does not open the detail panel.
 - **Approve selected** opens a confirmation dialog listing every `repo#number` and title, with an optional comment shared by all approvals. Focus starts on Cancel and nothing is sent until you click **Confirm**; the dialog traps focus and `Esc` cancels (not while running).
-- PRs are approved one at a time with per-PR progress. A failure (e.g. 422/403, with GitHub's reason) does not stop the rest; a 401 or a rate limit stops the batch, leaving the rest "not attempted". The summary reads "N approved, M failed" and **Retry failed** re-runs only the failures (earlier reasons are kept if a retry is blocked by a rate limit; retry rounds are reported separately). Statuses are refreshed once at the end.
+- PRs are approved one at a time with per-PR progress. A failure (e.g. 422/403, with GitHub's reason) does not stop the rest; a 401 or a rate limit stops the batch, leaving the rest "not attempted". The summary reads "N approved, M failed" and **Retry failed** (labelled **Retry failed and not attempted** after a stopped batch) re-runs only the failed and not-attempted PRs (earlier reasons are kept if a retry is blocked by a rate limit; retry rounds are reported separately). Statuses are refreshed once at the end.
 - There is deliberately no keyboard shortcut for bulk approve.
 
 ### Auto-refresh and header
