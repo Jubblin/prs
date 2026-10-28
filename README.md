@@ -12,6 +12,7 @@ Files: `index.html` (markup + CSP), `app.js` (all logic), `styles.css`. Deployed
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Security notes](#security-notes)
 - [Testing](#testing)
+- [Screenshots](#screenshots)
 
 ## Quick start
 
@@ -126,52 +127,24 @@ Press `?` in the app for the same list. Shortcuts are ignored while typing in a 
 
 ## Testing
 
-There is no build step and no automated test suite; verification is manual in a browser. Run the app locally (see [Quick start](#quick-start)) and use a fine-grained token for an account that has a few open PRs/issues, ideally including a PR you authored, one awaiting your review, a draft, and one with failing CI. A throwaway test repo is safest for the write actions (approve, merge, close).
+The full strategy, what is and is not verified, a manual checklist for every feature and error case, and a real-GitHub smoke test are in **[docs/TESTING.md](docs/TESTING.md)**.
 
-Quick sanity checks (browser DevTools console should stay free of errors and CSP violations):
+Automated end-to-end checks run against an in-memory fake of the GitHub API (dev-only, in `tests/`; the app itself stays dependency-free):
 
 ```sh
-node --check app.js          # syntax check (ES module)
-git diff --check             # whitespace problems
+cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
+node tests/run.mjs        # 50 checks, exit code 1 on failure
+node tests/shots.mjs      # regenerate the screenshots below
 ```
 
-### Manual checklist
+These checks use mocked responses only; behaviour on real GitHub still needs the manual smoke test.
 
-**Sign-in and persistence**
-- [ ] A bad token shows an error banner and stays on the sign-in screen; a valid one loads the lists and shows your username.
-- [ ] Reload: still signed in, same tab, repo filter and auto interval restored; text filter is empty.
-- [ ] **Sign out** clears the lists and returns to sign-in; the token is gone from `localStorage`.
+## Screenshots
 
-**Tabs, filters, list**
-- [ ] Keys `1`–`5` and clicking switch tabs; counts are shown.
-- [ ] Repo dropdown is grouped by owner with a `<owner> — all repos` entry; choosing it shows every repo of that owner, choosing a repo narrows further.
-- [ ] Text filter matches title, repo and number; `/` focuses it, `Esc` leaves it.
+Generated against the mock API (`node tests/shots.mjs`), so the data is fake.
 
-**Status**
-- [ ] PR rows show `CI: …` then a final state, and a Review state. Check success, failure, pending and none cases if available.
-- [ ] A token without Checks/Commit statuses shows `no access` and the permission banner.
-
-**Detail panel**
-- [ ] Click / `Enter` / `o` opens it; body, comments, check runs and changed files render. `Esc` or **Close** closes it.
-- [ ] Markdown: headings, lists, task lists, tables, code blocks and links render; raw HTML shows as text.
-- [ ] Images from github.com / user-images / githubusercontent show inline; an image from another host appears as a `🖼` link.
-
-**Actions** (use a test repo)
-- [ ] Comment with empty text is rejected; with text it posts and the count updates.
-- [ ] Approve / Request changes are disabled on your own PR and on closed PRs, with an explanation; Request changes needs a comment; drafts show a note.
-- [ ] Merge asks for confirmation; Cancel does nothing.
-- [ ] Close then Reopen flips the button label and item state.
-
-**Bulk approve**
-- [ ] Checkboxes are disabled (with reason) for own, draft and closed PRs; the toolbar appears with the right count.
-- [ ] Changing a filter drops hidden PRs from the selection; switching tab clears it.
-- [ ] **Approve selected** shows the dialog with focus on Cancel; `Esc` cancels; Confirm approves and reports "N approved, M failed"; **Retry failed** re-runs only failures.
-
-**Auto-refresh, header, shortcuts**
-- [ ] Set **Auto** to 2 min: **Last updated** advances; switching to another browser tab pauses it and it catches up on return.
-- [ ] Header, tabs and filters stay visible while scrolling; `j`/`k` keep the highlighted row visible below the header.
-- [ ] `?` shows the help overlay; `g` opens the item on GitHub; `r` refreshes; shortcuts do nothing while typing in a field.
-
-**Security**
-- [ ] DevTools → Network: requests go only to `api.github.com` (plus allowed image hosts).
-- [ ] Console shows no CSP violations during normal use.
+| | |
+| --- | --- |
+| ![List view with CI and review status, grouped repo filter and bulk checkboxes](docs/img/list.png) | ![Detail panel with rendered Markdown, status, files and comments](docs/img/detail.png) |
+| ![Bulk approve confirmation dialog](docs/img/bulk-approve.png) | ![Keyboard shortcuts help overlay](docs/img/help.png) |
+| ![Dark theme](docs/img/dark.png) | ![Phone-width layout](docs/img/mobile.png) |
