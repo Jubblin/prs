@@ -32,6 +32,8 @@ function h(tag, props, ...kids) {
   return e;
 }
 const clear = (n) => n.replaceChildren();
+// Append children, skipping null/undefined/false (DOM append would stringify them).
+const put = (parent, ...kids) => { parent.append(...kids.flat().filter((k) => k != null && k !== false)); return parent; };
 
 function safeUrl(u) {
   try { const x = new URL(u); return x.protocol === 'https:' && x.hostname === 'github.com' ? x.href : null; } catch { return null; }
@@ -390,7 +392,7 @@ function setTab(id) {
 function renderTabs() {
   const nav = $('tabs'); clear(nav);
   for (const t of TABS) {
-    nav.append(h('button', {
+    put(nav, h('button', {
       role: 'tab', type: 'button', 'aria-selected': String(t.id === state.tab),
       onclick: () => setTab(t.id),
     }, t.label, h('span', { class: 'count' }, (state.data[t.id] || []).length)));
@@ -410,12 +412,12 @@ function renderRepos() {
   }
   const values = [];
   clear(sel);
-  sel.append(h('option', { value: '' }, 'All repos'));
+  put(sel, h('option', { value: '' }, 'All repos'));
   for (const k of [...byOwner.keys()].sort()) {
     const { name: o, repos } = byOwner.get(k);
     repos.sort();
     values.push(o + '/', ...repos);
-    sel.append(h('optgroup', { label: o }, h('option', { value: o + '/' }, `${o} — all repos`), ...repos.map((r) => h('option', { value: r }, r.slice(o.length + 1)))));
+    put(sel, h('optgroup', { label: o }, h('option', { value: o + '/' }, `${o} — all repos`), ...repos.map((r) => h('option', { value: r }, r.slice(o.length + 1)))));
   }
   const want = values.find((v) => v === state.repo) || (state.repo.endsWith('/') ? values.find((v) => v.toLowerCase() === state.repo.toLowerCase()) : '');
   sel.value = want || '';
@@ -467,7 +469,7 @@ function buildList(ul) {
   clear(ul);
   pruneSelection(); renderToolbar();
   const items = visibleItems();
-  if (!items.length) { ul.append(h('li', { class: 'empty' }, 'Nothing here.')); return; }
+  if (!items.length) { put(ul, h('li', { class: 'empty' }, 'Nothing here.')); return; }
   for (const i of items) {
     const st = state.status.get(i.id);
     const link = safeUrl(i.html_url);
@@ -476,11 +478,11 @@ function buildList(ul) {
     const bulk = i.pull_request ? h('label', { class: 'bulk', title: reason || 'Select for bulk approve', onclick: (e) => e.stopPropagation() },
       h('input', { type: 'checkbox', 'aria-label': reason ? `${where} cannot be selected. ${reason}` : `Select ${where} for bulk approve`, disabled: !!reason, checked: !reason && state.sel.has(i.id),
         onchange: (e) => toggleSel(i, e.target.checked) })) : null;
-    ul.append(h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT') select(i); } },
+    put(ul, h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT') select(i); } },
       h('div', { class: 'row-title' }, bulk, i.title),
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
-        ...i.labels.map((l) => h('span', { class: 'label' }, l.name)),
+        ...(i.labels || []).map((l) => h('span', { class: 'label' }, l.name)),
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
         i.pull_request ? h('span', { class: st ? 'st-' + st.ci : 'st-loading', title: (st && st.ciTip) || null }, 'CI: ' + (st ? ciLabel(st.ci) : '…')) : null,
         i.pull_request ? h('span', { class: st ? 'st-' + st.review : 'st-loading' }, 'Review: ' + (st ? st.review : '…')) : null,
@@ -574,7 +576,7 @@ async function select(i) {
   renderList();
   const d = $('detail'); clear(d);
   d.hidden = false; $('layout').classList.add('open');
-  d.append(h('p', {}, 'Loading…'));
+  put(d, h('p', {}, 'Loading…'));
   try {
     const [owner, repo] = repoOf(i).split('/');
     const base = `/repos/${owner}/${repo}`;
@@ -596,7 +598,7 @@ function renderDetail(i, base, full, comments, files, st, me) {
   const d = $('detail'); clear(d);
   const isPr = !!i.pull_request;
   const link = safeUrl(full.html_url);
-  d.append(
+  put(d, 
     h('h3', {}, `${repoOf(i)}#${i.number}: ${full.title}`),
     h('div', { class: 'meta' }, h('span', {}, 'by ' + (full.user ? full.user.login : 'unknown')), h('span', {}, 'state: ' + full.state),
       link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, 'Open on GitHub ↗') : null,
@@ -604,18 +606,18 @@ function renderDetail(i, base, full, comments, files, st, me) {
     full.body ? h('div', { class: 'body' }, renderMarkdown(full.body)) : h('div', { class: 'body' }, '(no description)'));
 
   if (isPr && st) {
-    d.append(h('h3', {}, 'Status'),
+    put(d, h('h3', {}, 'Status'),
       h('div', { class: 'meta' },
         h('span', { class: 'st-' + st.ci, title: st.ciTip || null }, 'CI: ' + ciLabel(st.ci)),
         h('span', { class: 'st-' + st.review }, 'Review: ' + st.review),
         h('span', {}, 'mergeable: ' + (!st.pr ? 'unknown' : st.pr.mergeable == null && st.pr.state === 'open' ? 'computing…' : (st.pr.mergeable_state || 'unknown')))),
       st.ciTip ? h('div', { class: 'meta' }, st.ciTip) : null,
-      h('ul', {}, ...(st.checks.check_runs || []).map((r) => h('li', {}, `${r.name}: ${r.status === 'completed' ? r.conclusion : r.status}`))));
-    d.append(h('h3', {}, `Changed files (${files.length}${files.length >= 100 ? '+' : ''})`),
+      h('ul', {}, ...(st.checks.check_runs || []).map((r) => h('li', {}, `${r.name}: ${r.status === 'completed' ? (r.conclusion || 'unknown') : r.status}`))));
+    put(d, h('h3', {}, `Changed files (${files.length}${files.length >= 100 ? '+' : ''})`),
       h('ul', { class: 'files' }, ...files.map((f) => h('li', {}, `${f.filename} (+${f.additions} −${f.deletions})`))));
   }
 
-  d.append(h('h3', {}, `Comments (${comments.length})`),
+  put(d, h('h3', {}, `Comments (${comments.length})`),
     ...comments.map((c) => h('div', { class: 'comment' },
       h('div', { class: 'meta' }, (c.user ? c.user.login : 'unknown') + ' · ' + ago(c.created_at) + ' ago'),
       h('div', { class: 'body' }, renderMarkdown(c.body)))));
@@ -650,7 +652,7 @@ function renderDetail(i, base, full, comments, files, st, me) {
     reviewNote = own ? 'GitHub does not allow approving your own PR'
       : full.state !== 'open' ? 'This PR is closed or merged, so it cannot be reviewed'
       : isDraft ? 'This PR is a draft; reviews may be rejected until it is ready' : null;
-    row.append(
+    put(row, 
       approve, reqChanges,
       act('Merge', async () => {
         if (!confirm(`Merge ${repoOf(i)}#${i.number}?\n\n${full.title}`)) throw new ApiError('Merge cancelled.');
@@ -658,8 +660,8 @@ function renderDetail(i, base, full, comments, files, st, me) {
       }, 'danger'));
   }
   const closed = full.state === 'closed';
-  row.append(act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : ''));
-  d.append(h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
+  put(row, act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : ''));
+  put(d, h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
 }
 
 // ---- bulk approve ----
@@ -700,20 +702,20 @@ function renderBulk() {
   const ok = bulk.rows.filter((r) => r.status === 'done').length;
   const failed = bulk.rows.filter((r) => r.status === 'failed').length;
   const skipped = bulk.rows.filter((r) => r.status === 'skipped').length;
-  d.append(h('h2', { id: 'bulktitle' }, ph === 'confirm' ? `Approve ${n} pull request${n === 1 ? '' : 's'}?` : ph === 'running' ? 'Approving…' : 'Bulk approve finished'));
+  put(d, h('h2', { id: 'bulktitle' }, ph === 'confirm' ? `Approve ${n} pull request${n === 1 ? '' : 's'}?` : ph === 'running' ? 'Approving…' : 'Bulk approve finished'));
   const ul = h('ul', { class: 'bulk-list' });
   for (const r of bulk.rows) {
     r.el = h('span', {});
     if (ph !== 'confirm') paintRow(r);
-    ul.append(h('li', {}, h('span', { class: 'bulk-pr' }, rowWhere(r) + ' '), r.item.title, ' ', r.el));
+    put(ul, h('li', {}, h('span', { class: 'bulk-pr' }, rowWhere(r) + ' '), r.item.title, ' ', r.el));
   }
-  d.append(ul);
+  put(d, ul);
   const btns = h('div', { class: 'actions' });
   let focus = d;
   if (ph === 'confirm') {
-    d.append(h('p', { class: 'meta' }, 'Each PR gets an APPROVE review. This cannot be undone from here.'), bulk.ta);
+    put(d, h('p', { class: 'meta' }, 'Each PR gets an APPROVE review. This cannot be undone from here.'), bulk.ta);
     const cancel = h('button', { type: 'button', id: 'bulkcancel', onclick: closeBulk }, 'Cancel');
-    btns.append(cancel, h('button', { type: 'button', id: 'bulkconfirm', class: 'primary', onclick: () => { if (bulk.phase !== 'confirm') return; bulk.comment = bulk.ta.value.trim(); runBulk(bulk.rows); } }, `Confirm: approve ${n}`));
+    put(btns, cancel, h('button', { type: 'button', id: 'bulkconfirm', class: 'primary', onclick: () => { if (bulk.phase !== 'confirm') return; bulk.comment = bulk.ta.value.trim(); runBulk(bulk.rows); } }, `Confirm: approve ${n}`));
     focus = cancel;
   } else if (ph === 'done') {
     let summary = `${ok} approved, ${failed} failed` + (skipped ? `, ${skipped} not attempted` : '');
@@ -721,20 +723,20 @@ function renderBulk() {
       const mine = bulk.rows.filter((r) => r.round === bulk.round);
       summary += ` (retry round ${bulk.round}: ${mine.filter((r) => r.status === 'done').length} approved, ${mine.filter((r) => r.status === 'failed').length} failed, ${bulk.retried - mine.length} not retried)`;
     }
-    d.append(h('p', { id: 'bulksummary', role: 'status', class: failed || skipped ? 'bulk-bad' : 'bulk-good' }, summary), bulk.note ? h('p', { class: 'bulk-bad' }, bulk.note) : null);
-    if (failed || skipped) btns.append(h('button', { type: 'button', id: 'bulkretry', onclick: () => {
+    put(d, h('p', { id: 'bulksummary', role: 'status', class: failed || skipped ? 'bulk-bad' : 'bulk-good' }, summary), bulk.note ? h('p', { class: 'bulk-bad' }, bulk.note) : null);
+    if (failed || skipped) put(btns, h('button', { type: 'button', id: 'bulkretry', onclick: () => {
       if (bulk.phase !== 'done') return;
       const again = bulk.rows.filter((r) => r.status === 'failed' || r.status === 'skipped');
       for (const r of again) { r.prev = { status: r.status, msg: r.msg }; r.status = 'pending'; r.msg = ''; }
       bulk.note = ''; bulk.retried = again.length; runBulk(again);
     } }, skipped ? 'Retry failed and not attempted' : 'Retry failed'));
     const close = h('button', { type: 'button', id: 'bulkclose', onclick: closeBulk }, 'Close');
-    btns.append(close);
+    put(btns, close);
     focus = close;
   } else {
-    d.append(h('p', { class: 'meta', role: 'status' }, 'Working… please keep this window open.'));
+    put(d, h('p', { class: 'meta', role: 'status' }, 'Working… please keep this window open.'));
   }
-  d.append(btns);
+  put(d, btns);
   focus.focus();
 }
 async function runBulk(rows) {
