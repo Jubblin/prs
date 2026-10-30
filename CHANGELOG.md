@@ -5,35 +5,35 @@ All notable changes to this project, grouped by pull request. Format based on [K
 ## 2026-10-30
 
 ### Added
-- Full README, testing docs, screenshots and mocked-API tests (#14)
+- Full README, testing docs, screenshots and mocked-API tests ([#14](https://github.com/Jubblin/prs/pull/14))
 
 ### Fixed
-- Literal "null" text no longer appears in the detail panel; null/false children are skipped in direct DOM appends and null labels/conclusions are handled (#13)
+- Literal "null" text no longer appears in the detail panel; null/false children are skipped in direct DOM appends and null labels/conclusions are handled ([#13](https://github.com/Jubblin/prs/pull/13))
 
 ## 2026-10-27
 
 ### Added
-- Bulk approve for selected PRs (#11)
-- Keyboard shortcuts (#10)
+- Bulk approve for selected PRs ([#11](https://github.com/Jubblin/prs/pull/11))
+- Keyboard shortcuts ([#10](https://github.com/Jubblin/prs/pull/10))
 
 ### Changed
-- Repo filter is grouped by user/organization (#12)
+- Repo filter is grouped by user/organization ([#12](https://github.com/Jubblin/prs/pull/12))
 
 ## 2026-10-26
 
 ### Changed
-- Header, tabs and filters are sticky (#8)
-- Updated GitHub Actions to latest major versions (#7)
+- Header, tabs and filters are sticky ([#8](https://github.com/Jubblin/prs/pull/8))
+- Updated GitHub Actions to latest major versions ([#7](https://github.com/Jubblin/prs/pull/7))
 
 ### Fixed
-- Scroll shift on manual Refresh (#9)
-- CI status display, Approve errors, and markdown rendering (#4)
+- Scroll shift on manual Refresh ([#9](https://github.com/Jubblin/prs/pull/9))
+- CI status display, Approve errors, and markdown rendering ([#4](https://github.com/Jubblin/prs/pull/4))
 
 ## 2026-10-25
 
 ### Added
-- Auto-refresh for the dashboard (#3)
-- Renovate configuration (#2)
-- Initial static GitHub PR and issue dashboard, with GitHub Pages deployment, and persisted repo filter and active tab (#1)
+- Auto-refresh for the dashboard ([#3](https://github.com/Jubblin/prs/pull/3))
+- Renovate configuration ([#2](https://github.com/Jubblin/prs/pull/2))
+- Initial static GitHub PR and issue dashboard, with GitHub Pages deployment, and persisted repo filter and active tab ([#1](https://github.com/Jubblin/prs/pull/1))
 
-Note: #5 and #6 were not merged (#6 was an auto-closed Renovate pin-dependencies PR) and are not listed.
+Note: #5 is an issue (the Renovate Dependency Dashboard), not a pull request. #6 was an auto-closed Renovate pin-dependencies PR that was never merged. Neither is listed.
