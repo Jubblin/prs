@@ -38,7 +38,7 @@ Without Checks / Commit statuses / Pull requests read access the CI or Review co
 
 ### Tabs and lists
 
-Five tabs, each a GitHub search for open items (up to 50 per query, newest-updated first):
+Six tabs. Five are GitHub searches for open items (up to 50 per query, newest-updated first); **Waiting on me** is derived from them:
 
 | Key | Tab | Search |
 | --- | --- | --- |
@@ -47,6 +47,9 @@ Five tabs, each a GitHub search for open items (up to 50 per query, newest-updat
 | `3` | Assigned / mentioned PRs | `is:pr is:open assignee:@me` + `mentions:@me` (merged, de-duplicated) |
 | `4` | Issues assigned | `is:issue is:open assignee:@me` |
 | `5` | Issues created | `is:issue is:open author:@me` |
+| `6` | Waiting on me | built from tabs 2, 3 and 4 (no extra API calls) |
+
+**Waiting on me** merges review-requested PRs, PRs assigned to you (from the assigned/mentioned list; mention-only PRs are excluded) and assigned issues, de-duplicated, keeping those open for more than the chosen threshold (**3 / 7 / 14 / 30 days**, default 7, selector shown on this tab and saved in `localStorage`; an invalid saved value falls back to 7). Oldest first. `created_at` is used as the proxy for how long it has been waiting, because GitHub has no cheap "review requested at" timestamp. Each row shows `waiting N days` (amber; red and "(long overdue)" beyond 14 days). Filters, bulk approve and shortcuts work as on the other tabs. Empty state: "Nothing has been waiting on you for more than N days."
 
 Each tab shows an item count. A row shows title, `owner/repo#number`, labels, "updated … ago · opened … ago", a **GitHub ↗** link (PRs also show CI and Review status).
 
@@ -54,7 +57,7 @@ Each tab shows an item count. A row shows title, `owner/repo#number`, labels, "u
 
 - **Repo filter** – a dropdown grouped by owner (user/organization). Each group has an owner-wide option **`<owner> — all repos`** followed by that owner's individual repos; **All repos** clears the filter. Options come from the current tab's items. If the saved repo is not present in the current tab the dropdown falls back to All repos.
 - **Text filter** – case-insensitive match on title, `owner/repo` and number. Not persisted.
-- **Persistence** – these are kept in `localStorage`: the token, the selected tab, the repo filter, and the auto-refresh interval. The text filter, row selection and bulk selection are not.
+- **Persistence** – these are kept in `localStorage`: the token, the selected tab, the repo filter, the auto-refresh interval, and the waiting threshold. The text filter, row selection and bulk selection are not.
 
 ### Detail panel
 
@@ -110,7 +113,7 @@ Press `?` in the app for the same list. Shortcuts are ignored while typing in a 
 
 | Key | Action |
 | --- | --- |
-| `1`–`5` | Switch tab |
+| `1`–`6` | Switch tab |
 | `j` / `↓`, `k` / `↑` | Move the highlighted row down / up |
 | `Enter` or `o` | Open the highlighted item's detail panel |
 | `g` | Open the highlighted item on GitHub (new tab) |
