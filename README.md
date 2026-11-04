@@ -4,6 +4,8 @@ A static, no-build dashboard (plain HTML/CSS/ES modules, no dependencies) for yo
 
 Files: `index.html` (markup + CSP), `app.js` (all logic), `styles.css`. Deployed to GitHub Pages by `.github/workflows/pages.yml` on every push to `main`.
 
+See [CHANGELOG.md](CHANGELOG.md) for notable changes.
+
 ## Contents
 
 - [Quick start](#quick-start)
