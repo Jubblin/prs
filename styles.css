@@ -106,3 +106,9 @@ label.bulk:has(input:disabled){cursor:not-allowed}
 .bulk-list li:last-child{border-bottom:0}
 .bulk-pr{font-weight:600}
 .bulk-bad{color:var(--bad)}.bulk-good{color:var(--ok)}
+
+.wait{font-weight:600}
+.wait-warn{color:var(--warn)}
+.wait-long{color:var(--bad)}
+#waitbox{display:flex;gap:.3rem;align-items:center}
+#waitbox[hidden]{display:none}

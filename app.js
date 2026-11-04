@@ -4,6 +4,10 @@ const REPO_KEY = 'gh_dashboard_repo';
 const TAB_KEY = 'gh_dashboard_tab';
 const AUTO_KEY = 'gh_dashboard_autorefresh';
 const AUTO_CHOICES = [0, 2, 5, 10]; // minutes; 0 = off
+const WAIT_KEY = 'gh_dashboard_waiting_days';
+const WAIT_CHOICES = [3, 7, 14, 30]; // days; default 7
+const WAIT_STRONG = 14; // days after which a waiting item is flagged as long overdue
+const DAY_MS = 86400000;
 
 const TABS = [
   { id: 'authored', label: 'My PRs', pr: true, queries: ['is:pr is:open author:@me'] },
@@ -11,12 +15,19 @@ const TABS = [
   { id: 'involved', label: 'Assigned / mentioned PRs', pr: true, queries: ['is:pr is:open assignee:@me', 'is:pr is:open mentions:@me'] },
   { id: 'assigned', label: 'Issues assigned', pr: false, queries: ['is:issue is:open assignee:@me'] },
   { id: 'created', label: 'Issues created', pr: false, queries: ['is:issue is:open author:@me'] },
+  // Virtual tab: built from the lists above (no queries of its own).
+  { id: 'waiting', label: 'Waiting on me', pr: true, virtual: true },
 ];
+const SEARCH_TABS = TABS.filter((t) => !t.virtual);
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), waitDays: loadWait(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
 function loadAuto() {
   const v = localStorage.getItem(AUTO_KEY);
   return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
+}
+function loadWait() {
+  const v = localStorage.getItem(WAIT_KEY);
+  return v !== null && WAIT_CHOICES.includes(Number(v)) ? Number(v) : 7;
 }
 const $ = (id) => document.getElementById(id);
 
@@ -346,10 +357,10 @@ async function refresh(auto = false) {
   const token = state.token;
   let results;
   try {
-    results = await Promise.all(TABS.map((t) => loadTab(t).catch((e) => { banner(e.message); return null; })));
+    results = await Promise.all(SEARCH_TABS.map((t) => loadTab(t).catch((e) => { banner(e.message); return null; })));
   } finally { $('refresh').disabled = false; state.refreshing = false; }
   if (state.token !== token) return; // signed out meanwhile
-  TABS.forEach((t, i) => { if (results[i]) state.data[t.id] = results[i]; });
+  SEARCH_TABS.forEach((t, i) => { if (results[i]) state.data[t.id] = results[i]; });
   state.lastAttempt = Date.now();
   if (results.some(Boolean)) state.lastUpdated = state.lastAttempt;
   const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
@@ -385,17 +396,36 @@ $('autorefresh').addEventListener('change', () => {
   scheduleAuto();
 });
 
+// Items for a tab. 'Waiting on me' is derived from the other lists: review-requested PRs, PRs and issues
+// assigned to me, de-duplicated by id, open longer than the threshold (created_at is the proxy), oldest first.
+const ageDays = (i, now = Date.now()) => Math.floor((now - new Date(i.created_at).getTime()) / DAY_MS);
+function tabItems(id) {
+  if (id !== 'waiting') return state.data[id] || [];
+  const me = (state.me || '').toLowerCase(), now = Date.now(), seen = new Map();
+  const mine = (i) => (i.assignees || []).some((a) => a && a.login && a.login.toLowerCase() === me);
+  for (const i of [...(state.data.review || []), ...(state.data.involved || []).filter(mine), ...(state.data.assigned || [])]) seen.set(i.id, i);
+  return [...seen.values()].filter((i) => now - new Date(i.created_at).getTime() > state.waitDays * DAY_MS)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+}
+function renderWaitControl() { $('waitbox').hidden = state.tab !== 'waiting'; $('waitdays').value = String(state.waitDays); }
+$('waitdays').addEventListener('change', () => {
+  const v = Number($('waitdays').value);
+  state.waitDays = WAIT_CHOICES.includes(v) ? v : 7;
+  localStorage.setItem(WAIT_KEY, String(state.waitDays));
+  renderTabs(); renderRepos(); renderList();
+});
+
 function setTab(id) {
   state.tab = id; localStorage.setItem(TAB_KEY, id); state.selected = null; state.cursor = null; state.sel.clear(); closeDetail(); renderTabs(); renderRepos(); renderList();
 }
 
 function renderTabs() {
-  const nav = $('tabs'); clear(nav);
+  const nav = $('tabs'); clear(nav); renderWaitControl();
   for (const t of TABS) {
     put(nav, h('button', {
       role: 'tab', type: 'button', 'aria-selected': String(t.id === state.tab),
       onclick: () => setTab(t.id),
-    }, t.label, h('span', { class: 'count' }, (state.data[t.id] || []).length)));
+    }, t.label, h('span', { class: 'count' }, tabItems(t.id).length)));
   }
 }
 
@@ -405,7 +435,7 @@ function repoMatches(i, f) { return !f || (f.endsWith('/') ? ownerOf(i).toLowerC
 function renderRepos() {
   const sel = $('repofilter');
   const byOwner = new Map();
-  for (const r of new Set((state.data[state.tab] || []).map(repoOf))) {
+  for (const r of new Set(tabItems(state.tab).map(repoOf))) {
     const o = r.split('/')[0], k = o.toLowerCase();
     if (!byOwner.has(k)) byOwner.set(k, { name: o, repos: [] });
     byOwner.get(k).repos.push(r);
@@ -430,7 +460,7 @@ function renderList() {
 }
 function visibleItems() {
   const q = $('textfilter').value.toLowerCase(), repo = $('repofilter').value;
-  return (state.data[state.tab] || []).filter((i) =>
+  return tabItems(state.tab).filter((i) =>
     repoMatches(i, repo) && (!q || (i.title + ' ' + repoOf(i) + ' ' + i.number).toLowerCase().includes(q)));
 }
 // Why a PR cannot be bulk-approved (null = it can). Search results carry user/state/draft.
@@ -465,11 +495,16 @@ $('bulkall').addEventListener('click', () => {
 });
 $('bulkapprove').addEventListener('click', openBulk);
 
+function waitBadge(d) {
+  const strong = d > WAIT_STRONG;
+  return h('span', { class: 'wait ' + (strong ? 'wait-long' : 'wait-warn') }, `waiting ${d} ${d === 1 ? 'day' : 'days'}` + (strong ? ' (long overdue)' : ''));
+}
 function buildList(ul) {
   clear(ul);
   pruneSelection(); renderToolbar();
   const items = visibleItems();
-  if (!items.length) { put(ul, h('li', { class: 'empty' }, 'Nothing here.')); return; }
+  if (!items.length) { put(ul, h('li', { class: 'empty' }, state.tab === 'waiting' ? `Nothing has been waiting on you for more than ${state.waitDays} days.` : 'Nothing here.')); return; }
+  const now = Date.now();
   for (const i of items) {
     const st = state.status.get(i.id);
     const link = safeUrl(i.html_url);
@@ -483,6 +518,7 @@ function buildList(ul) {
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
         ...(i.labels || []).map((l) => h('span', { class: 'label' }, l.name)),
+        state.tab === 'waiting' ? waitBadge(ageDays(i, now)) : null,
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
         i.pull_request ? h('span', { class: st ? 'st-' + st.ci : 'st-loading', title: (st && st.ciTip) || null }, 'CI: ' + (st ? ciLabel(st.ci) : '…')) : null,
         i.pull_request ? h('span', { class: st ? 'st-' + st.review : 'st-loading' }, 'Review: ' + (st ? st.review : '…')) : null,
