@@ -37,7 +37,7 @@ Sign-in/401/sign-out; persistence of tab, repo and auto interval (and fallback f
 
 ## Verified vs. NOT verified
 
-**Verified against mocked APIs** (50 checks, all passing at the time of writing): everything listed above, in Chromium headless only.
+**Verified against mocked APIs** (52 checks, all passing at the time of writing): everything listed above, in Chromium headless only.
 
 **NOT verified on real GitHub / real browsers:**
 - The mock is written from our reading of the API, not generated from it. Real response shapes, pagination (`per_page=100` only, no paging), search ranking, and field availability (e.g. fine-grained-token 403 vs 404 behaviour, `mergeable_state` values, `check-runs` for forks) may differ.

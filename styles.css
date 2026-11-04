@@ -78,8 +78,9 @@ h1{font-size:1rem}
 #controls{padding:0 .5rem}
 #tabs{flex-wrap:nowrap;overflow-x:auto}
 #tabs button{white-space:nowrap;padding:.2rem .5rem}
-#filters{margin:.25rem 0;flex-wrap:nowrap}
+#filters{margin:.25rem 0;flex-wrap:wrap}
 #filters input{min-width:0}
+#waitbox{flex:1 0 100%}
 main{padding:.5rem}
 #detail{position:static;max-height:none;overflow:visible}
 }
