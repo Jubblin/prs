@@ -644,10 +644,20 @@ await test('token check after sign-in lists missing permission automatically', a
   await page.locator('#tokencheck .chk-missing').waitFor();
   assert.ok((await txt(page, '#tokencheck .chk-missing')).includes('Checks: Read'));
 }, { token: null });
-await test('token check: saved-token reload shows no OK note and makes no probe calls', async ({ page, mock }) => {
+await test('token check: saved-token load shows no OK note; missing-permission warning shows once per session, not on reload', async ({ page, mock }) => {
   await settled(page);
+  await until(async () => mock.called('GET', '/contents/').length >= 1, 'silent check');
   assert.equal(await page.locator('#tokencheck').isVisible(), false);
-  assert.equal(mock.called('GET', '/contents/').length, 0);
+  await page.evaluate(() => sessionStorage.clear());
+  mock.fail('GET', 'check-runs', 403, { message: 'nope' });
+  await page.reload(); await settled(page);
+  await page.locator('#tokencheck .chk-missing').waitFor();
+  const n = mock.called('GET', '/contents/').length;
+  await page.reload(); await settled(page);
+  await until(async () => mock.called('GET', '/contents/').length > n, 'second silent check');
+  assert.equal(await page.locator('#tokencheck').isVisible(), false, 'warning not re-shown in same session');
+  await page.locator('#checktoken').click();
+  await page.locator('#tokencheck .chk-missing').waitFor();
 });
 await test('no network except api.github.com and allowed image hosts during normal use', async ({ page, hosts }) => {
   await tab(page, 2); await settled(page); await open_(page, 'Add dark mode');

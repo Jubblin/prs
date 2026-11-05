@@ -384,19 +384,31 @@ async function checkToken(token) {
   return out;
 }
 const CHECK_ICON = { ok: '✓ ok', missing: '✗ missing', unverifiable: '? unverifiable', error: '! error' };
+async function warnKey(token) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return 'gh_dashboard_tokencheck_' + [...new Uint8Array(d)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// auto: false (manual button, always full results) | 'signin' (explicit sign-in) | 'load' (saved token on page load).
+// Automatic runs are silent while checking; warnings show once per browser session per token (sessionStorage).
 async function runTokenCheck(token, auto = false) {
   const box = $('tokencheck');
-  box.hidden = false;
-  if (!token) { clear(box); put(box, h('p', {}, 'Enter a token first.')); return; }
-  clear(box); put(box, h('p', {}, 'Checking token…'));
+  if (!token) { box.hidden = false; clear(box); put(box, h('p', {}, 'Enter a token first.')); return; }
+  if (!auto) { box.hidden = false; clear(box); put(box, h('p', {}, 'Checking token…')); }
   $('checktoken').disabled = $('checklogin').disabled = true;
   try {
     const res = await checkToken(token);
-    clear(box);
-    if (auto && state.token === token && !res.some((r) => r.state === 'missing' || r.state === 'error')) {
-      put(box, h('p', {}, 'Token OK: all verifiable permissions present.'));
-      return;
+    const bad = res.some((r) => r.state === 'missing' || r.state === 'error');
+    if (auto) {
+      if (state.token !== token) return;
+      if (!bad) {
+        if (auto === 'signin') { box.hidden = false; clear(box); put(box, h('p', {}, 'Token OK: all verifiable permissions present.')); }
+        return;
+      }
+      const key = await warnKey(token);
+      if (auto === 'load' && sessionStorage.getItem(key)) return;
+      try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ }
     }
+    box.hidden = false; clear(box);
     put(box, h('ul', {}, res.map((r) => h('li', { class: 'chk-' + r.state }, h('span', { class: 'chk-state' }, CHECK_ICON[r.state]), ' ', r.label, r.note ? ' — ' + r.note : ''))));
   } finally { $('checktoken').disabled = $('checklogin').disabled = false; }
 }
@@ -424,7 +436,7 @@ $('loginform').addEventListener('submit', async (e) => {
     $('username').textContent = me.login; state.me = me.login;
     banner('');
     showView(); refresh();
-    runTokenCheck(state.token, true);
+    runTokenCheck(state.token, 'signin');
   } catch (err) {
     state.token = null;
     banner(err.message);
@@ -1130,6 +1142,7 @@ document.addEventListener('keydown', (e) => {
 // ---- init ----
 state.token = localStorage.getItem(TOKEN_KEY);
 showView();
+if (state.token) runTokenCheck(state.token, 'load');
 if (state.token) {
   gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; refresh(); }).catch((e) => banner(e.message));
 }
