@@ -629,6 +629,21 @@ await test('token check (sign-in screen): token missing Checks is reported by na
   assert.equal(await page.locator('#token').inputValue(), 'tok');
   assert.ok(await page.locator('#login').isVisible(), 'still signed out');
 }, { token: null });
+await test('token check runs once automatically after sign-in; brief OK note, not on refresh', async ({ page, mock }) => {
+  await page.locator('#token').fill('tok'); await page.locator('#loginform button[type=submit]').click();
+  await page.locator('#tokencheck', { hasText: 'Token OK' }).waitFor();
+  assert.equal(await page.locator('#tokencheck li').count(), 0);
+  const n = () => mock.called('GET', '/contents/').length;
+  assert.equal(n(), 1);
+  await page.locator('#refresh').click(); await settled(page);
+  assert.equal(n(), 1, 'no re-check on refresh');
+}, { token: null });
+await test('token check after sign-in lists missing permission automatically', async ({ page, mock }) => {
+  mock.fail('GET', 'check-runs', 403, { message: 'nope' });
+  await page.locator('#token').fill('tok'); await page.locator('#loginform button[type=submit]').click();
+  await page.locator('#tokencheck .chk-missing').waitFor();
+  assert.ok((await txt(page, '#tokencheck .chk-missing')).includes('Checks: Read'));
+}, { token: null });
 await test('no network except api.github.com and allowed image hosts during normal use', async ({ page, hosts }) => {
   await tab(page, 2); await settled(page); await open_(page, 'Add dark mode');
   for (const h of hosts) assert.ok(/^(api\.github\.com|github\.com|[^.]+\.githubusercontent\.com|github\.githubassets\.com)$/.test(h), h);

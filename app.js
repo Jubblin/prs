@@ -384,7 +384,7 @@ async function checkToken(token) {
   return out;
 }
 const CHECK_ICON = { ok: '✓ ok', missing: '✗ missing', unverifiable: '? unverifiable', error: '! error' };
-async function runTokenCheck(token) {
+async function runTokenCheck(token, auto = false) {
   const box = $('tokencheck');
   box.hidden = false;
   if (!token) { clear(box); put(box, h('p', {}, 'Enter a token first.')); return; }
@@ -393,6 +393,10 @@ async function runTokenCheck(token) {
   try {
     const res = await checkToken(token);
     clear(box);
+    if (auto && state.token === token && !res.some((r) => r.state === 'missing' || r.state === 'error')) {
+      put(box, h('p', {}, 'Token OK: all verifiable permissions present.'));
+      return;
+    }
     put(box, h('ul', {}, res.map((r) => h('li', { class: 'chk-' + r.state }, h('span', { class: 'chk-state' }, CHECK_ICON[r.state]), ' ', r.label, r.note ? ' — ' + r.note : ''))));
   } finally { $('checktoken').disabled = $('checklogin').disabled = false; }
 }
@@ -420,6 +424,7 @@ $('loginform').addEventListener('submit', async (e) => {
     $('username').textContent = me.login; state.me = me.login;
     banner('');
     showView(); refresh();
+    runTokenCheck(state.token, true);
   } catch (err) {
     state.token = null;
     banner(err.message);
