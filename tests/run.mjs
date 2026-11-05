@@ -644,6 +644,11 @@ await test('token check after sign-in lists missing permission automatically', a
   await page.locator('#tokencheck .chk-missing').waitFor();
   assert.ok((await txt(page, '#tokencheck .chk-missing')).includes('Checks: Read'));
 }, { token: null });
+await test('token check: saved-token reload shows no OK note and makes no probe calls', async ({ page, mock }) => {
+  await settled(page);
+  assert.equal(await page.locator('#tokencheck').isVisible(), false);
+  assert.equal(mock.called('GET', '/contents/').length, 0);
+});
 await test('no network except api.github.com and allowed image hosts during normal use', async ({ page, hosts }) => {
   await tab(page, 2); await settled(page); await open_(page, 'Add dark mode');
   for (const h of hosts) assert.ok(/^(api\.github\.com|github\.com|[^.]+\.githubusercontent\.com|github\.githubassets\.com)$/.test(h), h);

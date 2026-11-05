@@ -148,7 +148,7 @@ Automated end-to-end checks run against an in-memory fake of the GitHub API (dev
 
 ```sh
 cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
-node tests/run.mjs        # 54 checks, exit code 1 on failure
+node tests/run.mjs        # 55 checks, exit code 1 on failure
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 
