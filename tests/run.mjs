@@ -26,13 +26,13 @@ const until = async (fn, what = 'condition') => { for (let n = 0; n < 100; n++) 
 // ---- sign-in, sign-out, persistence ----
 await test('login: bad token (401) shows error and stays signed out', async ({ page, mock }) => {
   mock.fail('GET', '^/user$', 401, { message: 'Bad credentials' });
-  await page.locator('#token').fill('bad'); await page.locator('#loginform button').click();
+  await page.locator('#token').fill('bad'); await page.locator('#loginform button[type=submit]').click();
   await page.waitForFunction(() => document.getElementById('banner').textContent.includes('401'));
   assert.equal(await page.locator('#login').isVisible(), true);
   assert.equal(await page.evaluate(() => localStorage.getItem('gh_dashboard_token')), null);
 }, { token: null });
 await test('login: good token loads lists, stores token, shows user', async ({ page }) => {
-  await page.locator('#token').fill('good'); await page.locator('#loginform button').click();
+  await page.locator('#token').fill('good'); await page.locator('#loginform button[type=submit]').click();
   await page.locator('#list li').first().waitFor();
   assert.equal(await txt(page, '#username'), 'me');
   assert.equal(await page.evaluate(() => localStorage.getItem('gh_dashboard_token')), 'good');
@@ -607,6 +607,100 @@ await test('CSP: policy present; inline script, foreign fetch and foreign image 
   });
   assert.deepEqual(r, { inline: 0, f: 'blocked', img: 'blocked' });
   assert.ok(csp.length >= 3, 'CSP violations reported: ' + csp.length);
+});
+await test('token check (signed in): all permissions ok, read-only calls, no token leak', async ({ page, mock }) => {
+  await settled(page); mock.calls.length = 0;
+  await page.locator('#checktoken').click();
+  await page.locator('#tokencheck .chk-ok').first().waitFor();
+  const t = await txt(page, '#tokencheck');
+  for (const l of ['Authenticate', 'Search', 'Pull requests: Read', 'Checks: Read', 'Commit statuses: Read', 'Issues: Read', 'Contents: Read', 'Contents: Write']) assert.ok(t.includes(l), l);
+  assert.equal(await page.locator('#tokencheck .chk-missing, #tokencheck .chk-error').count(), 0);
+  assert.equal(await page.locator('#tokencheck .chk-unverifiable').count(), 1);
+  assert.ok(t.includes('Cannot verify - needed only to merge'));
+  assert.ok(mock.calls.length > 5 && mock.calls.every((c) => c.method === 'GET'), 'only GET calls');
+  assert.ok(!t.includes('tok') || !/\btok\b/.test(t));
+});
+await test('token check (sign-in screen): token missing Checks is reported by name', async ({ page, mock }) => {
+  mock.fail('GET', 'check-runs', 403, { message: 'Resource not accessible' });
+  await page.locator('#token').fill('tok'); await page.locator('#checklogin').click();
+  await page.locator('#tokencheck .chk-missing').waitFor();
+  assert.equal(await txt(page, '#tokencheck .chk-missing'), '✗ missing Checks: Read — Checks: Read');
+  assert.equal(await page.locator('#tokencheck .chk-missing').count(), 1);
+  assert.equal(await page.locator('#token').inputValue(), 'tok');
+  assert.ok(await page.locator('#login').isVisible(), 'still signed out');
+}, { token: null });
+await test('token check runs once automatically after sign-in; brief OK note, not on refresh', async ({ page, mock }) => {
+  await page.locator('#token').fill('tok'); await page.locator('#loginform button[type=submit]').click();
+  await page.locator('#tokencheck', { hasText: 'Token OK' }).waitFor();
+  assert.equal(await page.locator('#tokencheck li').count(), 0);
+  const n = () => mock.called('GET', '/contents/').length;
+  assert.equal(n(), 1);
+  await page.locator('#refresh').click(); await settled(page);
+  assert.equal(n(), 1, 'no re-check on refresh');
+}, { token: null });
+await test('token check after sign-in lists missing permission automatically', async ({ page, mock }) => {
+  mock.fail('GET', 'check-runs', 403, { message: 'nope' });
+  await page.locator('#token').fill('tok'); await page.locator('#loginform button[type=submit]').click();
+  await page.locator('#tokencheck .chk-missing').waitFor();
+  assert.ok((await txt(page, '#tokencheck .chk-missing')).includes('Checks: Read'));
+}, { token: null });
+const nContents = (mock) => mock.called('GET', '/contents/').length;
+await test('token check: saved-token load checks once per session per token, silently, not on later loads', async ({ page, mock }) => {
+  await settled(page);
+  await until(async () => nContents(mock) === 1, 'one automatic check');
+  assert.equal(await page.locator('#tokencheck').isVisible(), false, 'silent when all is well');
+  assert.equal(mock.called('GET', '^/user$').length, 1, 'check reuses the cached /user');
+  const searches = mock.called('GET', '/search/issues').length;
+  assert.ok(searches <= 5 + 1, 'at most one search beyond refresh: ' + searches);
+  assert.ok(mock.calls.every((c) => c.method === 'GET'), 'only GETs');
+  const key = await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('gh_dashboard_tokencheck_')));
+  assert.equal(key.length, 1); assert.ok(!key[0].includes('tok') || key[0].length > 30);
+  assert.ok(!(await page.evaluate(() => JSON.stringify([...Object.values(sessionStorage)]))).includes('"tok"'));
+  for (let k = 0; k < 2; k++) { await page.reload(); await settled(page); }
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(nContents(mock), 1, 'two reloads: no further automatic check');
+  assert.equal(mock.called('GET', '^/user$').length, 3, 'only the page\'s own /user per load');
+});
+await test('token check: automatic warning shows once per session; manual check always runs the full probe', async ({ page, mock }) => {
+  await settled(page);
+  await until(async () => nContents(mock) === 1, 'first check');
+  await page.evaluate(() => sessionStorage.clear());
+  mock.fail('GET', 'check-runs', 403, { message: 'nope' });
+  await page.reload(); await settled(page);
+  await page.locator('#tokencheck .chk-missing').waitFor();
+  assert.equal(nContents(mock), 2);
+  await page.reload(); await settled(page); await new Promise((r) => setTimeout(r, 300));
+  assert.equal(nContents(mock), 2, 'no automatic check on the next load');
+  assert.equal(await page.locator('#tokencheck').isVisible(), false);
+  const u = mock.called('GET', '^/user$').length;
+  await page.locator('#checktoken').click(); await page.locator('#tokencheck .chk-missing').waitFor();
+  assert.equal(nContents(mock), 3);
+  assert.equal(mock.called('GET', '^/user$').length, u + 1, 'manual run probes /user itself');
+  await page.locator('#checktoken').click(); await until(async () => nContents(mock) === 4, 'manual run again');
+});
+await test('token check: skipped while rate-limited (also guards bulk batches), and not marked as done', async ({ page, mock }) => {
+  await settled(page); await until(async () => nContents(mock) === 1, 'first check');
+  await page.evaluate(() => sessionStorage.clear());
+  mock.fail('GET', '/search/issues', 403, { message: 'rate' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) });
+  await page.reload(); await settled(page); await new Promise((r) => setTimeout(r, 400));
+  assert.equal(nContents(mock), 1, 'no check while rate-limited');
+  assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('gh_dashboard_tokencheck_')).length), 0);
+});
+await test('token check: 401 on manual check shows "Token rejected"', async ({ page, mock }) => {
+  await settled(page);
+  mock.fail('GET', '^/user$', 401, { message: 'Bad credentials' });
+  await page.locator('#checktoken').click();
+  await page.locator('#tokencheck', { hasText: 'Token rejected (401)' }).waitFor();
+  assert.equal(await page.locator('#tokencheck .chk-error').count(), 1);
+});
+await test('token check: missing permission rendering names the permission and no literal null/undefined', async ({ page, mock }) => {
+  await settled(page);
+  mock.fail('GET', '/commits/.*/status$', 403, { message: 'nope' }); mock.fail('GET', '/issues/\\d+$', 403, { message: 'nope' });
+  await page.locator('#checktoken').click(); await page.locator('#tokencheck .chk-missing').first().waitFor();
+  const t = await txt(page, '#tokencheck');
+  assert.ok(t.includes('Issues: Read') && /Commit statuses: Read/.test(t));
+  assert.equal(await page.locator('#tokencheck .chk-missing').count(), 2);
+  assert.ok(!/\b(null|undefined|false)\b/.test(t));
 });
 await test('no network except api.github.com and allowed image hosts during normal use', async ({ page, hosts }) => {
   await tab(page, 2); await settled(page); await open_(page, 'Add dark mode');

@@ -101,6 +101,7 @@ export function createMock() {
         if (method === 'PATCH') { i.state = body.state; if (i.state === 'open') i.updated_at = iso(0); }
         return send(200, { ...i });
       }
+      if ((r = /^\/repos\/([^/]+\/[^/]+)\/contents\/?$/.exec(url.pathname))) return send(200, []);
       return send(404, { message: 'Unmocked ' + path });
     },
   };

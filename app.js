@@ -322,11 +322,122 @@ function ago(iso) {
 }
 const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 
+// ---- token permission check (read-only GETs only; never sends or shows the token beyond the Authorization header) ----
+const CHECK_QUERIES = ['is:pr is:open author:@me', 'is:pr is:open review-requested:@me', 'is:issue is:open author:@me', 'is:issue is:open assignee:@me'];
+async function probe(token, path) {
+  try {
+    const res = await fetch(API + path, { headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + token, 'X-GitHub-Api-Version': '2022-11-28' } });
+    return { status: res.status, ok: res.ok, json: res.ok ? await res.json().catch(() => null) : null };
+  } catch { return { status: 0, ok: false, json: null }; }
+}
+// Returns [{ label, state: 'ok'|'missing'|'unverifiable'|'error', note }]
+// cheap (automatic runs): reuse the cached /user and the already-fetched search results, at most one extra search.
+async function checkToken(token, cheap = false) {
+  const out = [];
+  const add = (label, state, note = '') => out.push({ label, state, note });
+  const grade = (label, r, perm) => {
+    if (r.ok) add(label, 'ok');
+    else if (r.status === 403 || r.status === 404) add(label, 'missing', perm);
+    else add(label, 'error', r.status ? 'HTTP ' + r.status : 'network error');
+    return r.ok;
+  };
+  let pr = null, issue = null, searchOk = false;
+  const take = (items) => {
+    for (const it of items || []) {
+      if (!it.repository_url) continue;
+      const t = { repo: repoOf(it), number: it.number };
+      if (it.pull_request) pr = pr || t; else issue = issue || t;
+    }
+  };
+  if (cheap && state.me) {
+    add('Authenticate (/user)', 'ok');
+    const cached = Object.values(state.data).flat();
+    if (cached.length) { searchOk = true; take(cached); }
+    if (!searchOk || !pr || !issue) {
+      const r = await probe(token, '/search/issues?q=' + encodeURIComponent(!searchOk || !issue ? CHECK_QUERIES[2] : CHECK_QUERIES[0]) + '&per_page=5');
+      if (r.ok) { searchOk = true; take(r.json && r.json.items); }
+    }
+  } else {
+    const user = await probe(token, '/user');
+    if (user.status === 401) { add('Authenticate (/user)', 'error', 'Token rejected (401)'); return out; }
+    if (!user.ok) { add('Authenticate (/user)', 'error', user.status ? 'HTTP ' + user.status : 'network error'); return out; }
+    add('Authenticate (/user)', 'ok');
+    for (const q of CHECK_QUERIES) {
+      const r = await probe(token, '/search/issues?q=' + encodeURIComponent(q) + '&per_page=5');
+      if (r.ok) searchOk = true;
+      else { if (!searchOk) break; continue; }
+      take(r.json && r.json.items);
+      if (pr && issue) break;
+    }
+  }
+  if (!searchOk) add('Search (/search/issues)', 'error', 'Search failed');
+  else add('Search (/search/issues)', 'ok');
+  const none = 'No pull request found to test with';
+  if (pr) {
+    const pull = await probe(token, `/repos/${pr.repo}/pulls/${pr.number}`);
+    grade('Pull requests: Read', pull, PERM_HINT.reviews);
+    grade('Pull request reviews: Read', await probe(token, `/repos/${pr.repo}/pulls/${pr.number}/reviews`), PERM_HINT.reviews);
+    const sha = pull.ok && pull.json && pull.json.head && pull.json.head.sha;
+    if (sha) {
+      grade(PERM_HINT.checks, await probe(token, `/repos/${pr.repo}/commits/${sha}/check-runs`), PERM_HINT.checks);
+      grade(PERM_HINT.combined, await probe(token, `/repos/${pr.repo}/commits/${sha}/status`), PERM_HINT.combined);
+    } else {
+      add(PERM_HINT.checks, 'unverifiable', 'Needs Pull requests: Read first');
+      add(PERM_HINT.combined, 'unverifiable', 'Needs Pull requests: Read first');
+    }
+  } else {
+    for (const l of ['Pull requests: Read', 'Pull request reviews: Read', PERM_HINT.checks, PERM_HINT.combined]) add(l, 'unverifiable', none);
+  }
+  const repo = (issue || pr || {}).repo;
+  if (issue) grade('Issues: Read', await probe(token, `/repos/${issue.repo}/issues/${issue.number}`), 'Issues: Read');
+  else if (pr) grade('Issues: Read', await probe(token, `/repos/${pr.repo}/issues/${pr.number}`), 'Issues: Read');
+  else add('Issues: Read', 'unverifiable', 'No issue or pull request found to test with');
+  if (repo) grade('Contents: Read', await probe(token, `/repos/${repo}/contents/`), 'Contents: Read');
+  else add('Contents: Read', 'unverifiable', 'No repository found to test with');
+  add('Contents: Write', 'unverifiable', 'Cannot verify - needed only to merge');
+  return out;
+}
+const CHECK_ICON = { ok: '✓ ok', missing: '✗ missing', unverifiable: '? unverifiable', error: '! error' };
+async function warnKey(token) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return 'gh_dashboard_tokencheck_' + [...new Uint8Array(d)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// auto: false (manual button: always the full probe) | 'signin' (explicit sign-in) | 'load' (saved token on page load).
+// Automatic runs happen at most once per browser session per token (marker in sessionStorage), whatever the result,
+// are cheap and silent unless something is wrong, and are skipped during a bulk approve or while rate-limited.
+async function runTokenCheck(token, auto = false) {
+  const box = $('tokencheck');
+  if (!token) { box.hidden = false; clear(box); put(box, h('p', {}, 'Enter a token first.')); return; }
+  if (auto) {
+    if (state.token !== token || state.busy > 0 || (bulk && bulk.phase === 'running') || Date.now() < state.rateLimitUntil) return;
+    const key = await warnKey(token);
+    if (auto === 'load' && sessionStorage.getItem(key)) return;
+    try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ }
+  } else { box.hidden = false; clear(box); put(box, h('p', {}, 'Checking token…')); }
+  $('checktoken').disabled = $('checklogin').disabled = true;
+  try {
+    const res = await checkToken(token, !!auto);
+    const bad = res.some((r) => r.state === 'missing' || r.state === 'error');
+    if (auto) {
+      if (state.token !== token) return;
+      if (!bad) {
+        if (auto === 'signin') { box.hidden = false; clear(box); put(box, h('p', {}, 'Token OK: all verifiable permissions present.')); }
+        return;
+      }
+    }
+    box.hidden = false; clear(box);
+    put(box, h('ul', {}, res.map((r) => h('li', { class: 'chk-' + r.state }, h('span', { class: 'chk-state' }, CHECK_ICON[r.state]), ' ', r.label, r.note ? ' — ' + r.note : ''))));
+  } finally { $('checktoken').disabled = $('checklogin').disabled = false; }
+}
+$('checklogin').addEventListener('click', () => runTokenCheck($('token').value.trim()));
+$('checktoken').addEventListener('click', () => runTokenCheck(state.token));
+
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
   state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); state.waitCache.clear(); state.waitFail.clear(); state.waitPending.clear(); state.waitRun++; localStorage.removeItem(WAIT_CACHE_KEY); $('waitbanner').hidden = true; closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
+  $('tokencheck').hidden = true;
 }
 function showView() {
   const on = !!state.token;
@@ -341,7 +452,9 @@ $('loginform').addEventListener('submit', async (e) => {
     localStorage.setItem(TOKEN_KEY, state.token);
     $('username').textContent = me.login; state.me = me.login;
     banner('');
-    showView(); refresh();
+    showView();
+    const t = state.token;
+    refresh().then(() => runTokenCheck(t, 'signin'));
   } catch (err) {
     state.token = null;
     banner(err.message);
@@ -1048,7 +1161,8 @@ document.addEventListener('keydown', (e) => {
 state.token = localStorage.getItem(TOKEN_KEY);
 showView();
 if (state.token) {
-  gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; refresh(); }).catch((e) => banner(e.message));
+  const t = state.token;
+  gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; return refresh(); }).then(() => runTokenCheck(t, 'load')).catch((e) => banner(e.message));
 }
 
 // Keep scroll-padding in sync with the sticky header height.
