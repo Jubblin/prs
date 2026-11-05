@@ -113,6 +113,67 @@ await test('waiting tab: filtered, de-duplicated, oldest first, threshold persis
   await page.locator('#textfilter').fill('zzz');
   assert.equal((await txt(page, '#list li.empty')).trim(), 'Nothing has been waiting on you for more than 7 days.');
 });
+const evAt = (days) => new Date(Date.now() - days * DAY_MS_T).toISOString();
+const DAY_MS_T = 86400000;
+const reqEv = (days, login) => ({ event: 'review_requested', created_at: evAt(days), requested_reviewer: { login } });
+const rmEv = (days, login) => ({ event: 'review_request_removed', created_at: evAt(days), requested_reviewer: { login } });
+function timeline(mock) {
+  ageItems(mock);
+  const by = (n) => mock.items.find((x) => x.number === n);
+  by(20).created_at = evAt(12);
+  by(13).events = [{ event: 'review_requested', created_at: evAt(12), requested_team: { slug: 'core' } }]; // team request only
+  by(11).events = [reqEv(20, 'me'), rmEv(15, 'me'), reqEv(9, 'me')]; // re-request resets the clock
+  by(15).events = [reqEv(20, 'me'), rmEv(3, 'me')]; // request withdrawn: not waiting
+  by(10).events = [reqEv(2, 'me'), { event: 'assigned', created_at: evAt(7.5), assignee: { login: 'me' } }, reqEv(1, 'other')]; // assigned path is older
+  by(20).events = [{ event: 'assigned', created_at: evAt(9), assignee: { login: 'me' } }];
+}
+await test('waiting tab: age from request/assignment time, reset, removal, team, fallback, cache', async ({ page, mock }) => {
+  timeline(mock);
+  await page.locator('#refresh').click(); await settled(page);
+  await page.keyboard.press('6');
+  await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
+  const rows = async () => (await page.locator('#list li').all()).length ? page.locator('#list li').evaluateAll((ls) => ls.map((l) => [l.querySelector('.row-title').textContent.trim(), l.querySelector('.wait').textContent])) : [];
+  assert.deepEqual(await rows(), [
+    ['Bump deps', 'waiting 12 days (since requested)'], // team request
+    ['Draft: refactor router', 'waiting 9 days (since requested)'], // re-request after removal
+    ['Assigned issue', 'waiting 9 days (since assigned)'], // created 12d ago
+    ['Add dark mode', 'waiting 7 days (since assigned)'], // created 8d, review requested 2d, assigned 7.5d: oldest path wins
+  ]);
+  assert.equal(await row(page, 'Closed PR').count(), 0, 'withdrawn request excluded');
+  assert.equal(await txt(page, '#tabs button[aria-selected=true] .count'), '4');
+  assert.equal(await page.locator('#waitbanner').isVisible(), false);
+  const n = mock.called('GET', '/events').length;
+  assert.equal(n, 5, 'one events request per old candidate'); // 10, 11, 13, 15, 20; #14 (2d) is skipped
+  await page.locator('#refresh').click(); await settled(page);
+  await page.waitForTimeout(500);
+  assert.equal(mock.called('GET', '/events').length, n, 'cache avoids refetch on refresh');
+  await page.reload(); await page.locator('#list li').first().waitFor(); await settled(page); await page.waitForTimeout(500);
+  assert.equal(mock.called('GET', '/events').length, n, 'localStorage cache avoids refetch after reload');
+  assert.match(await txt(page, '#list li:first-child .wait'), /since (requested|assigned)/);
+  await page.locator('#signout').click();
+  assert.equal(await page.evaluate(() => localStorage.getItem('gh_dashboard_wait_cache')), null);
+}, { storage: { gh_dashboard_tab: 'waiting' } });
+await test('waiting tab: events failure falls back to opened date with one banner', async ({ page, mock }) => {
+  timeline(mock);
+  mock.fail('GET', '/events', 403, { message: 'Resource not accessible by personal access token' });
+  await page.locator('#refresh').click(); await settled(page);
+  await until(async () => await page.locator('#waitbanner').isVisible(), 'banner');
+  assert.match(await txt(page, '#waitbanner'), /Issues: Read/);
+  await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
+  assert.match(await txt(page, '#list li:first-child .wait'), /\(since opened, long overdue\)/);
+  assert.equal(await page.locator('#list li').count(), 5); // 10, 11, 13, 15 and issue 20 by created_at
+  const n = mock.called('GET', '/events').length;
+  await page.locator('#refresh').click(); await settled(page); await page.waitForTimeout(500);
+  assert.equal(mock.called('GET', '/events').length, n, 'failed items are not retried on every refresh');
+}, { storage: { gh_dashboard_tab: 'waiting' } });
+await test('waiting tab: rate limit on events degrades gracefully', async ({ page, mock }) => {
+  timeline(mock);
+  mock.fail('GET', '/events', 403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) });
+  await page.locator('#refresh').click(); await settled(page);
+  await until(async () => await page.locator('#waitbanner').isVisible(), 'banner');
+  assert.match(await txt(page, '#waitbanner'), /Rate limit/i);
+  assert.ok(await page.locator('#list li').count() > 0);
+}, { storage: { gh_dashboard_tab: 'waiting' } });
 await test('waiting tab: invalid saved threshold falls back to 7; empty state', async ({ page }) => {
   await page.keyboard.press('6');
   assert.equal(await page.locator('#waitdays').inputValue(), '7');
