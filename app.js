@@ -33,8 +33,8 @@ function loadWaitCache() {
   try {
     const o = JSON.parse(localStorage.getItem(WAIT_CACHE_KEY) || '{}');
     for (const [id, e] of Object.entries(o)) {
-      if (e && typeof e === 'object' && typeof e.u === 'string' && typeof e.p === 'string' && typeof e.s === 'number'
-        && (e.t === null || typeof e.t === 'number') && ['requested', 'assigned', 'opened'].includes(e.k)) m.set(id, { u: e.u, p: e.p, t: e.t, k: e.k, x: e.x === true, s: e.s });
+      if (e && typeof e === 'object' && typeof e.u === 'string' && typeof e.p === 'string' && typeof e.m === 'string' && typeof e.s === 'number'
+        && (e.t === null || typeof e.t === 'number') && ['requested', 'assigned', 'opened'].includes(e.k)) m.set(id, { m: e.m, u: e.u, p: e.p, t: e.t, k: e.k, x: e.x === true, s: e.s });
     }
   } catch { /* ignore a corrupt cache */ }
   return m;
@@ -420,7 +420,9 @@ $('autorefresh').addEventListener('change', () => {
 // assigned to me, de-duplicated by id. Age runs from when I was asked (review request / assignment, from the
 // item's events, see loadWaitTimes) and falls back to created_at when that is unknown. Strictly older than the
 // threshold, oldest first.
-const sinceOf = (i) => { const e = state.waitCache.get(String(i.id)); return e && e.t !== null ? e.t : new Date(i.created_at).getTime(); };
+// Cache entries belong to the login they were computed for (m); another account's entries are ignored.
+const waitEntry = (i) => { const e = state.waitCache.get(String(i.id)); return e && state.me && e.m === state.me.toLowerCase() ? e : undefined; };
+const sinceOf = (i) => { const e = waitEntry(i); return e && e.t !== null ? e.t : new Date(i.created_at).getTime(); };
 const ageDays = (i, now = Date.now()) => Math.floor((now - sinceOf(i)) / DAY_MS);
 // Items that could be waiting on me, with the path(s) that put them here: p contains 'r' (review requested) and/or 'a' (assigned).
 function waitCandidates() {
@@ -436,7 +438,7 @@ function tabItems(id) {
   if (id !== 'waiting') return state.data[id] || [];
   const now = Date.now();
   return [...waitCandidates().values()].map((c) => c.i).filter((i) => {
-    const e = state.waitCache.get(String(i.id));
+    const e = waitEntry(i);
     return !(e && e.x) && now - sinceOf(i) > state.waitDays * DAY_MS;
   }).sort((a, b) => sinceOf(a) - sinceOf(b));
 }
@@ -531,10 +533,13 @@ $('bulkapprove').addEventListener('click', openBulk);
 
 function waitBadge(i, now) {
   const d = ageDays(i, now), strong = d > WAIT_STRONG;
-  const e = state.waitCache.get(String(i.id));
+  const e = waitEntry(i);
   const how = e && e.t !== null ? (e.k === 'assigned' ? 'since assigned' : 'since requested') : 'since opened';
   const checking = state.waitPending.has(i.id) && !(e && e.u === i.updated_at);
-  return [h('span', { class: 'wait ' + (strong ? 'wait-long' : 'wait-warn') }, `waiting ${d} ${d === 1 ? 'day' : 'days'} (${how}${strong ? ', long overdue' : ''})`),
+  // The hidden sizer holds the longest possible text so the row keeps the same width and height whatever the label becomes.
+  return [h('span', { class: 'wait-wrap' },
+    h('span', { class: 'wait ' + (strong ? 'wait-long' : 'wait-warn') }, `waiting ${d} ${d === 1 ? 'day' : 'days'} (${how}${strong ? ', long overdue' : ''})`),
+    h('span', { class: 'wait-size', 'aria-hidden': 'true' }, 'waiting 888 days (since requested, long overdue)')),
     h('span', { class: 'wait-check' + (checking ? '' : ' done') }, 'checking…')];
 }
 function buildList(ul) {
@@ -692,10 +697,10 @@ async function loadWaitTimes() {
   if (state.waitPending.size) { state.waitRerun = true; return; }
   const token = state.token, run = ++state.waitRun, now = Date.now();
   const cands = waitCandidates();
-  for (const [id, c] of cands) { const e = state.waitCache.get(String(id)); if (e) e.s = now; }
+  for (const { i } of cands.values()) { const e = waitEntry(i); if (e) e.s = now; }
   const todo = [...cands.values()].filter(({ i, p }) => {
     if (now - new Date(i.created_at).getTime() <= state.waitDays * DAY_MS) return false;
-    const e = state.waitCache.get(String(i.id));
+    const e = waitEntry(i);
     return !(e && e.u === i.updated_at && e.p === p) && !state.waitFail.has(`${i.id}:${i.updated_at}`);
   });
   saveWaitCache();
@@ -711,7 +716,7 @@ async function loadWaitTimes() {
       try {
         const r = waitFromEvents(await fetchEvents(i), state.me, p);
         if (stale()) return;
-        state.waitCache.set(String(i.id), { u: i.updated_at, p, t: r.t, k: r.k, x: r.x, s: Date.now() });
+        state.waitCache.set(String(i.id), { m: state.me.toLowerCase(), u: i.updated_at, p, t: r.t, k: r.k, x: r.x, s: Date.now() });
         saveWaitCache();
       } catch (e) {
         if (stale()) return;

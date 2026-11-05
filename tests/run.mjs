@@ -153,6 +153,16 @@ await test('waiting tab: age from request/assignment time, reset, removal, team,
   await page.locator('#signout').click();
   assert.equal(await page.evaluate(() => localStorage.getItem('gh_dashboard_wait_cache')), null);
 }, { storage: { gh_dashboard_tab: 'waiting' } });
+await test('waiting tab: cached request times of another login are ignored', async ({ page, mock }) => {
+  timeline(mock);
+  const it = mock.items.find((x) => x.number === 13);
+  const seeded = { [String(it.id)]: { m: 'someone-else', u: it.updated_at, p: 'r', t: Date.now() - 100 * DAY_MS_T, k: 'requested', x: false, s: Date.now() } };
+  await page.evaluate((c) => { localStorage.setItem('gh_dashboard_wait_cache', JSON.stringify(c)); }, seeded);
+  await page.reload(); await page.locator('#list li').first().waitFor(); await settled(page);
+  await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
+  assert.match(await txt(page, '#list li:has-text("Bump deps") .wait'), /^waiting 12 days \(since requested\)$/);
+  assert.ok(mock.called('GET', '/issues/13/events').length >= 1, 'events refetched for this login');
+}, { storage: { gh_dashboard_tab: 'waiting' } });
 await test('waiting tab: events failure falls back to opened date with one banner', async ({ page, mock }) => {
   timeline(mock);
   mock.fail('GET', '/events', 403, { message: 'Resource not accessible by personal access token' });

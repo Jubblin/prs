@@ -112,6 +112,9 @@ label.bulk:has(input:disabled){cursor:not-allowed}
 .wait{font-weight:600}
 .wait-warn{color:var(--warn)}
 .wait-long{color:var(--bad)}
+.wait-wrap{display:inline-grid}
+.wait-wrap>*{grid-area:1/1}
+.wait-size{visibility:hidden;font-weight:600;pointer-events:none}
 .wait-check{font-style:italic;opacity:.7}
 .wait-check.done{visibility:hidden}
 #waitbanner[hidden]{display:none}
