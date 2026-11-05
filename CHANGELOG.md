@@ -9,6 +9,16 @@ All notable changes to this project, grouped by pull request. Format based on [K
 - "Waiting on me" measures from when the review was requested or the item assigned to you (issue events; team requests handled; re-request resets the clock; withdrawn requests are excluded), labelled `since requested` / `since assigned`, falling back to `since opened`; lazy, cached, at most 4 concurrent lookups
 - "Waiting on me" rows show the exact date the age is measured from (local time and zone) via a keyboard-focusable label with tooltip, overlay and screen-reader description
 
+## 2026-11-05
+
+### Added
+- `scripts/create-pat.sh` opens GitHub's token page pre-filled with the permissions the dashboard needs, and can check the pasted token ([#17](https://github.com/Jubblin/prs/pull/17))
+- "Check token" button (sign-in screen and header) that reports which permissions are ok, missing or cannot be verified, using read-only requests only ([#17](https://github.com/Jubblin/prs/pull/17))
+- An automatic token check after sign-in and on load, at most once per browser session per token, skipped during bulk approve and while rate-limited ([#17](https://github.com/Jubblin/prs/pull/17))
+
+### Security
+- `create-pat.sh` keeps the token off command lines (it is passed to curl via a private temp file) and encodes non-ASCII token names correctly ([#17](https://github.com/Jubblin/prs/pull/17))
+
 ## 2026-10-30
 
 ### Added

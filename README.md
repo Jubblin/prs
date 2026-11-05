@@ -32,9 +32,9 @@ Any static host works (e.g. GitHub Pages); there is nothing to build. Paste a to
 3. Repository permissions: **Pull requests: Read and write**, **Issues: Read and write**, **Metadata: Read**, **Checks: Read**, **Commit statuses: Read**, **Contents: Read** (**Contents: Write** is needed only to merge).
 4. Paste the token on the sign-in screen.
 
-Shortcut: `scripts/create-pat.sh` opens GitHub's token page pre-filled with these permissions (`--no-merge` for Contents: read, `--print` to just show the URL) and can check the pasted token works. GitHub has no API to create fine-grained tokens, so you still click Generate.
+Shortcut: `scripts/create-pat.sh` opens GitHub's token page pre-filled with these permissions (`--no-merge` for Contents: read, `--print` to just show the URL) and can check the pasted token works; the token is passed to curl through a mode-600 temp file that is deleted on exit, never on a command line. GitHub has no API to create fine-grained tokens, so you still click Generate.
 
-**Check token** (sign-in screen and header; it also runs automatically after sign-in (brief OK note, or the list if something is missing) and silently on load, where a missing-permission warning shows only once per browser session per token) probes the token with read-only GETs against a repo from your own PR/issue search results and lists each permission as ok, missing (named as above) or unverifiable. Contents: Write cannot be proven without a write, so it is reported as "cannot verify - needed only to merge". No write calls are made and the token is never shown.
+**Check token** (sign-in screen and header) probes the token with read-only GETs against a repo from your own PR/issue search results and lists each permission as ok, missing (named as above) or unverifiable. Contents: Write cannot be proven without a write, so it is reported as "cannot verify - needed only to merge". No write calls are made and the token is never shown. The button always runs the full probe. An automatic, cheap check also runs after sign-in (brief OK note, or the list if something is missing) and on load with a saved token: at most once per browser session per token, whatever the result, reusing the signed-in user and the search results the dashboard already fetched (at most one extra search). It is skipped during a bulk approve and while rate-limited. The once-per-session marker is a `sessionStorage` key made from a truncated SHA-256 hash of the token (never the token itself); it disappears when the tab closes.
 
 Without Checks / Commit statuses / Pull requests read access the CI or Review column shows "no access" or "unknown" and a banner names the missing permission.
 
@@ -67,7 +67,7 @@ Each tab shows an item count. A row shows title, `owner/repo#number`, labels, "u
 
 - **Repo filter** – a dropdown grouped by owner (user/organization). Each group has an owner-wide option **`<owner> — all repos`** followed by that owner's individual repos; **All repos** clears the filter. Options come from the current tab's items. If the saved repo is not present in the current tab the dropdown falls back to All repos.
 - **Text filter** – case-insensitive match on title, `owner/repo` and number. Not persisted.
-- **Persistence** – these are kept in `localStorage`: the token, the selected tab, the repo filter, the auto-refresh interval, the waiting threshold, and the cached request times of the Waiting on me tab. The text filter, row selection and bulk selection are not.
+- **Persistence** – these are kept in `localStorage`: the token, the selected tab, the repo filter, the auto-refresh interval, the waiting threshold, and the cached request times of the Waiting on me tab. The text filter, row selection and bulk selection are not. The token check keeps one hashed marker per token in `sessionStorage` (cleared when the tab closes).
 
 ### Detail panel
 
@@ -148,7 +148,8 @@ Automated end-to-end checks run against an in-memory fake of the GitHub API (dev
 
 ```sh
 cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
-node tests/run.mjs        # 55 checks, exit code 1 on failure
+node tests/run.mjs        # 68 checks, exit code 1 on failure
+bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.sh
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 

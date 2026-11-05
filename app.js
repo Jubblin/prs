@@ -331,7 +331,8 @@ async function probe(token, path) {
   } catch { return { status: 0, ok: false, json: null }; }
 }
 // Returns [{ label, state: 'ok'|'missing'|'unverifiable'|'error', note }]
-async function checkToken(token) {
+// cheap (automatic runs): reuse the cached /user and the already-fetched search results, at most one extra search.
+async function checkToken(token, cheap = false) {
   const out = [];
   const add = (label, state, note = '') => out.push({ label, state, note });
   const grade = (label, r, perm) => {
@@ -340,21 +341,34 @@ async function checkToken(token) {
     else add(label, 'error', r.status ? 'HTTP ' + r.status : 'network error');
     return r.ok;
   };
-  const user = await probe(token, '/user');
-  if (user.status === 401) { add('Authenticate (/user)', 'error', 'Token rejected (401)'); return out; }
-  if (!user.ok) { add('Authenticate (/user)', 'error', user.status ? 'HTTP ' + user.status : 'network error'); return out; }
-  add('Authenticate (/user)', 'ok');
   let pr = null, issue = null, searchOk = false;
-  for (const q of CHECK_QUERIES) {
-    const r = await probe(token, '/search/issues?q=' + encodeURIComponent(q) + '&per_page=5');
-    if (r.ok) searchOk = true;
-    else { if (!searchOk) break; continue; }
-    for (const it of (r.json && r.json.items) || []) {
+  const take = (items) => {
+    for (const it of items || []) {
       if (!it.repository_url) continue;
       const t = { repo: repoOf(it), number: it.number };
       if (it.pull_request) pr = pr || t; else issue = issue || t;
     }
-    if (pr && issue) break;
+  };
+  if (cheap && state.me) {
+    add('Authenticate (/user)', 'ok');
+    const cached = Object.values(state.data).flat();
+    if (cached.length) { searchOk = true; take(cached); }
+    if (!searchOk || !pr || !issue) {
+      const r = await probe(token, '/search/issues?q=' + encodeURIComponent(!searchOk || !issue ? CHECK_QUERIES[2] : CHECK_QUERIES[0]) + '&per_page=5');
+      if (r.ok) { searchOk = true; take(r.json && r.json.items); }
+    }
+  } else {
+    const user = await probe(token, '/user');
+    if (user.status === 401) { add('Authenticate (/user)', 'error', 'Token rejected (401)'); return out; }
+    if (!user.ok) { add('Authenticate (/user)', 'error', user.status ? 'HTTP ' + user.status : 'network error'); return out; }
+    add('Authenticate (/user)', 'ok');
+    for (const q of CHECK_QUERIES) {
+      const r = await probe(token, '/search/issues?q=' + encodeURIComponent(q) + '&per_page=5');
+      if (r.ok) searchOk = true;
+      else { if (!searchOk) break; continue; }
+      take(r.json && r.json.items);
+      if (pr && issue) break;
+    }
   }
   if (!searchOk) add('Search (/search/issues)', 'error', 'Search failed');
   else add('Search (/search/issues)', 'ok');
@@ -388,15 +402,21 @@ async function warnKey(token) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   return 'gh_dashboard_tokencheck_' + [...new Uint8Array(d)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-// auto: false (manual button, always full results) | 'signin' (explicit sign-in) | 'load' (saved token on page load).
-// Automatic runs are silent while checking; warnings show once per browser session per token (sessionStorage).
+// auto: false (manual button: always the full probe) | 'signin' (explicit sign-in) | 'load' (saved token on page load).
+// Automatic runs happen at most once per browser session per token (marker in sessionStorage), whatever the result,
+// are cheap and silent unless something is wrong, and are skipped during a bulk approve or while rate-limited.
 async function runTokenCheck(token, auto = false) {
   const box = $('tokencheck');
   if (!token) { box.hidden = false; clear(box); put(box, h('p', {}, 'Enter a token first.')); return; }
-  if (!auto) { box.hidden = false; clear(box); put(box, h('p', {}, 'Checking token…')); }
+  if (auto) {
+    if (state.token !== token || state.busy > 0 || (bulk && bulk.phase === 'running') || Date.now() < state.rateLimitUntil) return;
+    const key = await warnKey(token);
+    if (auto === 'load' && sessionStorage.getItem(key)) return;
+    try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ }
+  } else { box.hidden = false; clear(box); put(box, h('p', {}, 'Checking token…')); }
   $('checktoken').disabled = $('checklogin').disabled = true;
   try {
-    const res = await checkToken(token);
+    const res = await checkToken(token, !!auto);
     const bad = res.some((r) => r.state === 'missing' || r.state === 'error');
     if (auto) {
       if (state.token !== token) return;
@@ -404,9 +424,6 @@ async function runTokenCheck(token, auto = false) {
         if (auto === 'signin') { box.hidden = false; clear(box); put(box, h('p', {}, 'Token OK: all verifiable permissions present.')); }
         return;
       }
-      const key = await warnKey(token);
-      if (auto === 'load' && sessionStorage.getItem(key)) return;
-      try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ }
     }
     box.hidden = false; clear(box);
     put(box, h('ul', {}, res.map((r) => h('li', { class: 'chk-' + r.state }, h('span', { class: 'chk-state' }, CHECK_ICON[r.state]), ' ', r.label, r.note ? ' — ' + r.note : ''))));
@@ -435,8 +452,9 @@ $('loginform').addEventListener('submit', async (e) => {
     localStorage.setItem(TOKEN_KEY, state.token);
     $('username').textContent = me.login; state.me = me.login;
     banner('');
-    showView(); refresh();
-    runTokenCheck(state.token, 'signin');
+    showView();
+    const t = state.token;
+    refresh().then(() => runTokenCheck(t, 'signin'));
   } catch (err) {
     state.token = null;
     banner(err.message);
@@ -1142,9 +1160,9 @@ document.addEventListener('keydown', (e) => {
 // ---- init ----
 state.token = localStorage.getItem(TOKEN_KEY);
 showView();
-if (state.token) runTokenCheck(state.token, 'load');
 if (state.token) {
-  gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; refresh(); }).catch((e) => banner(e.message));
+  const t = state.token;
+  gh('/user').then((me) => { $('username').textContent = me.login; state.me = me.login; return refresh(); }).then(() => runTokenCheck(t, 'load')).catch((e) => banner(e.message));
 }
 
 // Keep scroll-padding in sync with the sticky header height.

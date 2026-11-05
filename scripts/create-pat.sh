@@ -23,7 +23,8 @@ Options:
   -h, --help       Show this help
 
 Validation reads the token from GH_TOKEN, or prompts for it (hidden input).
-The token is never written to disk or echoed.
+The token is never echoed or put on a command line; curl reads it from a
+mode-600 temp file that is deleted on exit.
 USAGE
 }
 
@@ -43,7 +44,8 @@ case "$expires" in
 esac
 
 urlencode() {
-  local s="$1" i c out=""
+  # Per-byte (C locale) so multi-byte UTF-8 becomes %XX per byte.
+  local LC_ALL=C s="$1" i c out=""
   for ((i = 0; i < ${#s}; i++)); do
     c="${s:i:1}"
     case "$c" in
@@ -94,11 +96,17 @@ if [ -z "$token" ]; then
 fi
 [ -n "$token" ] || exit 0
 
+# The token never appears on a command line (visible in ps): curl reads its
+# headers from a mode-600 config file that is removed on exit.
+cfg="$(mktemp)"
+trap 'rm -f "$cfg"' EXIT
+chmod 600 "$cfg"
+printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/vnd.github+json"\n' "$token" >"$cfg"
+
+gh_curl() { curl -sS -K "$cfg" "$@"; }
+
 api() {
-  curl -sS -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer $token" \
-    -H "Accept: application/vnd.github+json" \
-    "https://api.github.com$1"
+  gh_curl -o /dev/null -w '%{http_code}' "https://api.github.com$1"
 }
 
 report() {
@@ -114,8 +122,7 @@ fi
 if [ "$user_code" = "200" ] && command -v python3 >/dev/null 2>&1; then
   # Pick a PR and an issue from the user's own search results (read-only GETs).
   pick() {
-    curl -sS -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
-      "https://api.github.com/search/issues?q=$1&per_page=1" |
+    gh_curl "https://api.github.com/search/issues?q=$1&per_page=1" |
       python3 -c 'import sys,json
 try:
   i=json.load(sys.stdin)["items"][0]; print(i["repository_url"].split("/repos/")[1], i["number"])
@@ -126,7 +133,7 @@ except Exception: pass'
   if [ -n "${pr_repo:-}" ]; then
     report "pull requests read (GET pulls/$pr_num)" "$(api "/repos/$pr_repo/pulls/$pr_num")"
     report "reviews read (Pull requests: Read)" "$(api "/repos/$pr_repo/pulls/$pr_num/reviews")"
-    sha="$(curl -sS -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$pr_repo/pulls/$pr_num" |
+    sha="$(gh_curl "https://api.github.com/repos/$pr_repo/pulls/$pr_num" |
       python3 -c 'import sys,json
 try: print(json.load(sys.stdin)["head"]["sha"])
 except Exception: pass')"
