@@ -32,6 +32,8 @@ Any static host works (e.g. GitHub Pages); there is nothing to build. Paste a to
 3. Repository permissions: **Pull requests: Read and write**, **Issues: Read and write**, **Metadata: Read**, **Checks: Read**, **Commit statuses: Read**, **Contents: Read** (**Contents: Write** is needed only to merge).
 4. Paste the token on the sign-in screen.
 
+Shortcut: `scripts/create-pat.sh` opens GitHub's token page pre-filled with these permissions (`--no-merge` for Contents: read, `--print` to just show the URL) and can check the pasted token works. GitHub has no API to create fine-grained tokens, so you still click Generate.
+
 Without Checks / Commit statuses / Pull requests read access the CI or Review column shows "no access" or "unknown" and a banner names the missing permission.
 
 ## Features
