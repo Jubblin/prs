@@ -7,6 +7,7 @@ All notable changes to this project, grouped by pull request. Format based on [K
 ### Added
 - "Waiting on me" tab: review-requested and assigned items open longer than 3/7/14/30 days (default 7), oldest first, with "waiting N days" on each row; shortcut `6`
 - "Waiting on me" measures from when the review was requested or the item assigned to you (issue events; team requests handled; re-request resets the clock; withdrawn requests are excluded), labelled `since requested` / `since assigned`, falling back to `since opened`; lazy, cached, at most 4 concurrent lookups
+- "Waiting on me" rows show the exact date the age is measured from (local time and zone) via a keyboard-focusable label with tooltip, overlay and screen-reader description
 
 ## 2026-10-30
 

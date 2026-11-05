@@ -163,6 +163,47 @@ await test('waiting tab: cached request times of another login are ignored', asy
   assert.match(await txt(page, '#list li:has-text("Bump deps") .wait'), /^waiting 12 days \(since requested\)$/);
   assert.ok(mock.called('GET', '/issues/13/events').length >= 1, 'events refetched for this login');
 }, { storage: { gh_dashboard_tab: 'waiting' } });
+await test('waiting tab: exact date per source as tooltip, keyboard focus, screen reader text', async ({ page, mock }) => {
+  timeline(mock);
+  const by = (n) => mock.items.find((x) => x.number === n);
+  await page.locator('#refresh').click(); await settled(page);
+  await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
+  const DATE = '\\w{3} \\d{1,2} \\w{3} \\d{4}, \\d\\d:\\d\\d \\(\\S+\\)';
+  const info = (title) => row(page, title).locator('button.wait').evaluate((b) => ({ title: b.title, desc: document.getElementById(b.getAttribute('aria-describedby')).textContent, iso: document.getElementById(b.getAttribute('aria-describedby')).querySelector('time').getAttribute('datetime') }));
+  const cases = [['Draft: refactor router', 'Review requested', evAt(9)], ['Bump deps', 'Requested via team core', evAt(12)], ['Assigned issue', 'Assigned', evAt(9)], ['Add dark mode', 'Assigned', evAt(7.5)]];
+  for (const [title, label, iso] of cases) {
+    const r = await info(title);
+    assert.match(r.title, new RegExp(`^${label} ${DATE}$`), title);
+    assert.match(r.desc, new RegExp(`^${label} ${DATE}$`), title);
+    assert.ok(Math.abs(new Date(r.iso) - new Date(iso)) < 5000, title + ' datetime ' + r.iso);
+  }
+  // keyboard: focusable, shows the overlay, does not open the row; Escape hides it
+  const btn = row(page, 'Bump deps').locator('button.wait');
+  await btn.focus();
+  assert.equal(await page.locator('#waittip').isVisible(), true);
+  assert.match(await txt(page, '#waittip'), /^Requested via team core /);
+  const box = await page.locator('#waittip').boundingBox(), vw = page.viewportSize().width;
+  assert.ok(box.x >= 0 && box.x + box.width <= vw, 'overlay inside viewport');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#detail').isHidden(), true, 'Enter on the date label must not open the item');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#waittip').isHidden(), true);
+  // overlay does not move rows; tab order reaches the label; checkbox still works
+  const hs = await page.locator('#list li').evaluateAll((ls) => ls.map((l) => l.offsetHeight));
+  await btn.click();
+  assert.deepEqual(await page.locator('#list li').evaluateAll((ls) => ls.map((l) => l.offsetHeight)), hs);
+  assert.equal(await page.locator('#detail').isHidden(), true, 'clicking the label must not open the item');
+  await row(page, 'Bump deps').locator('input').check();
+  assert.equal(await txt(page, '#bulkcount'), '1 selected');
+  // opened fallback wording
+  mock.items.forEach((x) => { x.events = []; });
+  by(10).updated_at = new Date().toISOString(); // new cache key
+  const before = mock.called('GET', '/events').length;
+  await page.locator('#refresh').click(); await settled(page);
+  await until(async () => mock.called('GET', '/events').length > before && (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'refetch');
+  const o = await info('Add dark mode');
+  assert.match(o.title, new RegExp(`^Opened \\(no request/assignment event found\\) ${DATE}$`));
+}, { storage: { gh_dashboard_tab: 'waiting' }, viewport: { width: 375, height: 800 } });
 await test('waiting tab: events failure falls back to opened date with one banner', async ({ page, mock }) => {
   timeline(mock);
   mock.fail('GET', '/events', 403, { message: 'Resource not accessible by personal access token' });
