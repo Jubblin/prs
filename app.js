@@ -6,6 +6,9 @@ const AUTO_KEY = 'gh_dashboard_autorefresh';
 const AUTO_CHOICES = [0, 2, 5, 10]; // minutes; 0 = off
 const WAIT_KEY = 'gh_dashboard_waiting_days';
 const WAIT_CHOICES = [3, 7, 14, 30]; // days; default 7
+const WAIT_CACHE_KEY = 'gh_dashboard_wait_cache';
+const WAIT_CACHE_TTL = 14 * 86400000; // forget cached request times of items not seen for this long
+const WAIT_MAX_PAGES = 10; // events pages (100 each) read per item at most
 const WAIT_STRONG = 14; // days after which a waiting item is flagged as long overdue
 const DAY_MS = 86400000;
 
@@ -20,10 +23,26 @@ const TABS = [
 ];
 const SEARCH_TABS = TABS.filter((t) => !t.virtual);
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), waitDays: loadWait(), lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), waitDays: loadWait(), waitCache: loadWaitCache(), waitFail: new Set(), waitPending: new Set(), waitRun: 0, waitRerun: false, lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
 function loadAuto() {
   const v = localStorage.getItem(AUTO_KEY);
   return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
+}
+function loadWaitCache() {
+  const m = new Map();
+  try {
+    const o = JSON.parse(localStorage.getItem(WAIT_CACHE_KEY) || '{}');
+    for (const [id, e] of Object.entries(o)) {
+      if (e && typeof e === 'object' && typeof e.u === 'string' && typeof e.p === 'string' && typeof e.m === 'string' && typeof e.s === 'number'
+        && (e.t === null || typeof e.t === 'number') && ['requested', 'assigned', 'opened'].includes(e.k)) m.set(id, { m: e.m, u: e.u, p: e.p, t: e.t, k: e.k, g: typeof e.g === 'string' ? e.g : undefined, x: e.x === true, s: e.s });
+    }
+  } catch { /* ignore a corrupt cache */ }
+  return m;
+}
+function saveWaitCache() {
+  const now = Date.now();
+  for (const [id, e] of state.waitCache) if (now - e.s > WAIT_CACHE_TTL) state.waitCache.delete(id);
+  try { localStorage.setItem(WAIT_CACHE_KEY, JSON.stringify(Object.fromEntries(state.waitCache))); } catch { /* storage full: stay in memory */ }
 }
 function loadWait() {
   const v = localStorage.getItem(WAIT_KEY);
@@ -306,7 +325,7 @@ const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); state.waitCache.clear(); state.waitFail.clear(); state.waitPending.clear(); state.waitRun++; localStorage.removeItem(WAIT_CACHE_KEY); $('waitbanner').hidden = true; closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
 }
 function showView() {
@@ -368,6 +387,7 @@ async function refresh(auto = false) {
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
   scheduleAuto();
   loadPrStatuses();
+  loadWaitTimes();
 }
 
 // ---- auto refresh ----
@@ -397,15 +417,30 @@ $('autorefresh').addEventListener('change', () => {
 });
 
 // Items for a tab. 'Waiting on me' is derived from the other lists: review-requested PRs, PRs and issues
-// assigned to me, de-duplicated by id, open longer than the threshold (created_at is the proxy), oldest first.
-const ageDays = (i, now = Date.now()) => Math.floor((now - new Date(i.created_at).getTime()) / DAY_MS);
+// assigned to me, de-duplicated by id. Age runs from when I was asked (review request / assignment, from the
+// item's events, see loadWaitTimes) and falls back to created_at when that is unknown. Strictly older than the
+// threshold, oldest first.
+// Cache entries belong to the login they were computed for (m); another account's entries are ignored.
+const waitEntry = (i) => { const e = state.waitCache.get(String(i.id)); return e && state.me && e.m === state.me.toLowerCase() ? e : undefined; };
+const sinceOf = (i) => { const e = waitEntry(i); return e && e.t !== null ? e.t : new Date(i.created_at).getTime(); };
+const ageDays = (i, now = Date.now()) => Math.floor((now - sinceOf(i)) / DAY_MS);
+// Items that could be waiting on me, with the path(s) that put them here: p contains 'r' (review requested) and/or 'a' (assigned).
+function waitCandidates() {
+  const me = (state.me || '').toLowerCase(), seen = new Map();
+  const mine = (i) => (i.assignees || []).some((a) => a && a.login && a.login.toLowerCase() === me);
+  const add = (i, p) => { const c = seen.get(i.id); if (c) c.p = [...new Set(c.p + p)].sort().join(''); else seen.set(i.id, { i, p }); };
+  for (const i of state.data.review || []) add(i, 'r');
+  for (const i of (state.data.involved || []).filter(mine)) add(i, 'a');
+  for (const i of state.data.assigned || []) add(i, 'a');
+  return seen;
+}
 function tabItems(id) {
   if (id !== 'waiting') return state.data[id] || [];
-  const me = (state.me || '').toLowerCase(), now = Date.now(), seen = new Map();
-  const mine = (i) => (i.assignees || []).some((a) => a && a.login && a.login.toLowerCase() === me);
-  for (const i of [...(state.data.review || []), ...(state.data.involved || []).filter(mine), ...(state.data.assigned || [])]) seen.set(i.id, i);
-  return [...seen.values()].filter((i) => now - new Date(i.created_at).getTime() > state.waitDays * DAY_MS)
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const now = Date.now();
+  return [...waitCandidates().values()].map((c) => c.i).filter((i) => {
+    const e = waitEntry(i);
+    return !(e && e.x) && now - sinceOf(i) > state.waitDays * DAY_MS;
+  }).sort((a, b) => sinceOf(a) - sinceOf(b));
 }
 function renderWaitControl() { $('waitbox').hidden = state.tab !== 'waiting'; $('waitdays').value = String(state.waitDays); }
 $('waitdays').addEventListener('change', () => {
@@ -413,6 +448,7 @@ $('waitdays').addEventListener('change', () => {
   state.waitDays = WAIT_CHOICES.includes(v) ? v : 7;
   localStorage.setItem(WAIT_KEY, String(state.waitDays));
   renderTabs(); renderRepos(); renderList();
+  loadWaitTimes();
 });
 
 function setTab(id) {
@@ -495,12 +531,52 @@ $('bulkall').addEventListener('click', () => {
 });
 $('bulkapprove').addEventListener('click', openBulk);
 
-function waitBadge(d) {
-  const strong = d > WAIT_STRONG;
-  return h('span', { class: 'wait ' + (strong ? 'wait-long' : 'wait-warn') }, `waiting ${d} ${d === 1 ? 'day' : 'days'}` + (strong ? ' (long overdue)' : ''));
+const WAIT_FMT = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
+// 'Mon 27 Oct 2026, 14:03 (BST)' in the user's local time zone.
+function fmtExact(ms) {
+  if (!Number.isFinite(ms) || Number.isNaN(new Date(ms).getTime())) return 'date unknown';
+  const p = Object.fromEntries(WAIT_FMT.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return `${p.weekday} ${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute} (${p.timeZoneName})`;
 }
+// What the age is measured from: { label, ms }.
+function waitSource(i, checking) {
+  const e = waitEntry(i);
+  if (e && e.t !== null) return { ms: e.t, label: e.k === 'assigned' ? 'Assigned' : e.g ? 'Requested via team ' + e.g : 'Review requested' };
+  return { ms: new Date(i.created_at).getTime(), label: checking ? 'Opened (checking for a request/assignment event…)' : 'Opened (no request/assignment event found)' };
+}
+function waitBadge(i, now) {
+  const d = ageDays(i, now), strong = d > WAIT_STRONG;
+  const e = waitEntry(i);
+  const how = e && e.t !== null ? (e.k === 'assigned' ? 'since assigned' : 'since requested') : 'since opened';
+  const checking = state.waitPending.has(i.id) && !(e && e.u === i.updated_at);
+  const src = waitSource(i, checking), tipId = 'waitdesc-' + i.id;
+  const okDate = Number.isFinite(new Date(src.ms).getTime());
+  const when = h('time', okDate ? { datetime: new Date(src.ms).toISOString() } : {}, fmtExact(src.ms));
+  const desc = h('span', { class: 'sr-only', id: tipId }, src.label + ' ', when);
+  const text = `${src.label} ${fmtExact(src.ms)}`;
+  // A real button: reachable with Tab, announced with its description, tap/Enter/Space shows the overlay (no hover-only access).
+  const btn = h('button', { type: 'button', class: 'wait ' + (strong ? 'wait-long' : 'wait-warn'), title: text, 'aria-describedby': tipId,
+    onclick: (e) => { e.stopPropagation(); showWaitTip(btn, desc); }, onfocus: () => showWaitTip(btn, desc), onblur: hideWaitTip,
+    onkeydown: (e) => { if (e.key === 'Escape' && !$('waittip').hidden) { e.stopPropagation(); hideWaitTip(); } } },
+    `waiting ${d} ${d === 1 ? 'day' : 'days'} (${how}${strong ? ', long overdue' : ''})`);
+  // The hidden sizer holds the longest possible text so the row keeps the same width and height whatever the label becomes.
+  return [h('span', { class: 'wait-wrap' }, btn, h('span', { class: 'wait-size', 'aria-hidden': 'true' }, 'waiting 888 days (since requested, long overdue)'), desc),
+    h('span', { class: 'wait-check' + (checking ? '' : ' done') }, 'checking…')];
+}
+// One shared overlay (position: fixed, so showing it never reflows the list).
+function hideWaitTip() { const t = $('waittip'); if (t) t.hidden = true; }
+function showWaitTip(btn, desc) {
+  const t = $('waittip'); t.replaceChildren(...[...desc.childNodes].map((n) => n.cloneNode(true)));
+  t.hidden = false;
+  const r = btn.getBoundingClientRect(), w = t.offsetWidth, hgt = t.offsetHeight;
+  t.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  t.style.top = (r.bottom + hgt + 8 < window.innerHeight ? r.bottom + 4 : Math.max(8, r.top - hgt - 4)) + 'px';
+}
+window.addEventListener('scroll', hideWaitTip, { passive: true });
+window.addEventListener('resize', hideWaitTip);
+document.addEventListener('click', (e) => { if (!e.target.closest || !e.target.closest('.wait')) hideWaitTip(); });
 function buildList(ul) {
-  clear(ul);
+  clear(ul); hideWaitTip();
   pruneSelection(); renderToolbar();
   const items = visibleItems();
   if (!items.length) { put(ul, h('li', { class: 'empty' }, state.tab === 'waiting' ? `Nothing has been waiting on you for more than ${state.waitDays} days.` : 'Nothing here.')); return; }
@@ -513,12 +589,12 @@ function buildList(ul) {
     const bulk = i.pull_request ? h('label', { class: 'bulk', title: reason || 'Select for bulk approve', onclick: (e) => e.stopPropagation() },
       h('input', { type: 'checkbox', 'aria-label': reason ? `${where} cannot be selected. ${reason}` : `Select ${where} for bulk approve`, disabled: !!reason, checked: !reason && state.sel.has(i.id),
         onchange: (e) => toggleSel(i, e.target.checked) })) : null;
-    put(ul, h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT') select(i); } },
+    put(ul, h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') select(i); } },
       h('div', { class: 'row-title' }, bulk, i.title),
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
         ...(i.labels || []).map((l) => h('span', { class: 'label' }, l.name)),
-        state.tab === 'waiting' ? waitBadge(ageDays(i, now)) : null,
+        state.tab === 'waiting' ? waitBadge(i, now) : null,
         h('span', {}, 'updated ' + ago(i.updated_at) + ' ago · opened ' + ago(i.created_at) + ' ago'),
         i.pull_request ? h('span', { class: st ? 'st-' + st.ci : 'st-loading', title: (st && st.ciTip) || null }, 'CI: ' + (st ? ciLabel(st.ci) : '…')) : null,
         i.pull_request ? h('span', { class: st ? 'st-' + st.review : 'st-loading' }, 'Review: ' + (st ? st.review : '…')) : null,
@@ -602,6 +678,103 @@ async function loadPrStatuses() {
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
   renderList();
+}
+
+// ---- waiting since (review request / assignment time) ----
+// Reduce an item's issue events (oldest first) to when I was last asked. Returns { t, k, x }:
+//   t ms + k 'requested'|'assigned' = asked at t; k 'opened' = no usable event (use created_at); x = every request was withdrawn.
+// A removal followed by a new request resets the clock. A request for one of my teams counts when I have no event of my own.
+function waitFromEvents(events, me, p) {
+  me = me.toLowerCase();
+  const ev = [...events].filter((e) => e && typeof e.event === 'string' && e.created_at).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  let userReq, userSeen = false, assignAt, assignSeen = false;
+  const teams = new Map();
+  for (const e of ev) {
+    const t = new Date(e.created_at).getTime();
+    const rev = e.requested_reviewer && e.requested_reviewer.login, team = e.requested_team && (e.requested_team.slug || e.requested_team.name), asg = e.assignee && e.assignee.login;
+    if (e.event === 'review_requested' || e.event === 'review_request_removed') {
+      const on = e.event === 'review_requested';
+      if (rev && rev.toLowerCase() === me) { userSeen = true; userReq = on ? t : undefined; }
+      else if (team) { if (on) teams.set(team, t); else teams.delete(team); }
+    } else if ((e.event === 'assigned' || e.event === 'unassigned') && asg && asg.toLowerCase() === me) {
+      assignSeen = true; assignAt = e.event === 'assigned' ? t : undefined;
+    }
+  }
+  const paths = []; // { t, k } or 'none' (no event) or 'removed'
+  if (p.includes('r')) {
+    const teamBest = [...teams].reduce((a, b) => (!a || b[1] > a[1] ? b : a), null);
+    const t = userReq !== undefined ? userReq : teamBest ? teamBest[1] : undefined;
+    paths.push(t !== undefined ? { t, k: 'requested', g: userReq !== undefined ? undefined : teamBest[0] } : userSeen ? 'removed' : 'none');
+  }
+  if (p.includes('a')) paths.push(assignAt !== undefined ? { t: assignAt, k: 'assigned' } : assignSeen ? 'removed' : 'none');
+  const live = paths.filter((x) => x && x.t !== undefined);
+  if (live.length) { const w = live.reduce((a, b) => (b.t < a.t ? b : a)); return { t: w.t, k: w.k, g: w.g, x: false }; }
+  if (paths.includes('none')) return { t: null, k: 'opened', x: false };
+  return { t: null, k: 'opened', x: true };
+}
+async function fetchEvents(i) {
+  const [owner, repo] = repoOf(i).split('/');
+  const all = [];
+  for (let page = 1; page <= WAIT_MAX_PAGES; page++) {
+    const r = await gh(`/repos/${owner}/${repo}/issues/${i.number}/events?per_page=100&page=${page}`);
+    if (!Array.isArray(r)) break;
+    all.push(...r);
+    if (r.length < 100) break;
+  }
+  return all;
+}
+// After each refresh: look up request/assignment times, only for candidates opened longer ago than the threshold
+// (a request cannot predate the item, so younger ones cannot qualify), skipping fresh cache entries.
+async function loadWaitTimes() {
+  if (!state.token || !state.me) return;
+  if (state.waitPending.size) { state.waitRerun = true; return; }
+  const token = state.token, run = ++state.waitRun, now = Date.now();
+  const cands = waitCandidates();
+  for (const { i } of cands.values()) { const e = waitEntry(i); if (e) e.s = now; }
+  const todo = [...cands.values()].filter(({ i, p }) => {
+    if (now - new Date(i.created_at).getTime() <= state.waitDays * DAY_MS) return false;
+    const e = waitEntry(i);
+    return !(e && e.u === i.updated_at && e.p === p) && !state.waitFail.has(`${i.id}:${i.updated_at}`);
+  });
+  saveWaitCache();
+  if (!todo.length) return;
+  for (const { i } of todo) state.waitPending.add(i.id);
+  renderList();
+  let idx = 0, denied = 0, limited = '', other = '';
+  const stale = () => state.token !== token || state.waitRun !== run;
+  async function worker() {
+    while (idx < todo.length && !stale()) {
+      if (state.busy > 0 || Date.now() < state.rateLimitUntil) { if (Date.now() < state.rateLimitUntil) limited = limited || 'rate limit'; break; }
+      const { i, p } = todo[idx++];
+      try {
+        const r = waitFromEvents(await fetchEvents(i), state.me, p);
+        if (stale()) return;
+        state.waitCache.set(String(i.id), { m: state.me.toLowerCase(), u: i.updated_at, p, t: r.t, k: r.k, g: r.g, x: r.x, s: Date.now() });
+        saveWaitCache();
+      } catch (e) {
+        if (stale()) return;
+        if (e.status === 429 || Date.now() < state.rateLimitUntil) { limited = e.message; idx = todo.length; }
+        else { state.waitFail.add(`${i.id}:${i.updated_at}`); if (e.status === 403 || e.status === 404) denied++; else other = e.message; }
+      }
+      state.waitPending.delete(i.id);
+      updateWaitCount(); if (state.tab === 'waiting') renderList();
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (state.token !== token) return;
+  if (state.waitRun === run) {
+    for (const { i } of todo) state.waitPending.delete(i.id);
+    const b = $('waitbanner'), msg = limited ? 'Request times could not be fully checked (' + limited + '); showing time since opened for the rest.'
+      : denied ? 'Request times could not be read for some items (the token needs Issues: Read on those repositories, or events are unavailable); showing time since opened.'
+      : other ? 'Request times could not be read for some items (' + other + '); showing time since opened.' : '';
+    b.hidden = !msg; b.textContent = msg;
+    renderTabs(); renderRepos(); renderList();
+  }
+  if (state.waitRerun) { state.waitRerun = false; loadWaitTimes(); }
+}
+function updateWaitCount() {
+  const k = TABS.findIndex((t) => t.id === 'waiting'), c = $('tabs').children[k] && $('tabs').children[k].querySelector('.count');
+  if (c) c.textContent = String(tabItems('waiting').length);
 }
 
 // ---- detail ----
