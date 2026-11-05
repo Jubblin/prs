@@ -86,6 +86,11 @@ export function createMock() {
         const runs = { success: [{ name: 'build', status: 'completed', conclusion: 'success' }], failure: [{ name: 'build', status: 'completed', conclusion: 'failure' }], pending: [{ name: 'build', status: 'in_progress' }], none: [] }[i.ci];
         return send(200, { check_runs: runs });
       }
+      if ((r = /^\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/events$/.exec(url.pathname))) {
+        const i = byKey(r[1], r[2]); if (!i) return send(404, { message: 'Not Found' });
+        const per = Number(url.searchParams.get('per_page') || 30), pg = Number(url.searchParams.get('page') || 1);
+        return send(200, (i.events || []).slice((pg - 1) * per, pg * per));
+      }
       if ((r = /^\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments$/.exec(url.pathname))) {
         const i = byKey(r[1], r[2]); if (!i) return send(404, { message: 'Not Found' });
         if (method === 'POST') { i.comments.push({ user: { login: ME }, created_at: new Date().toISOString(), body: body.body }); return send(201, {}); }

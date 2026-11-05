@@ -19,6 +19,7 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 #userbox{display:flex;gap:.5rem;align-items:center}
 #banner{padding:.6rem 1rem;background:var(--bad);color:#fff}
 #banner.info{background:var(--warn)}
+#waitbanner{padding:.4rem 1rem;background:var(--warn);color:#fff;font-size:.9em}
 #permbanner{padding:.4rem 1rem;background:var(--warn);color:#fff;font-size:.9em}
 #loginform{display:flex;gap:.5rem;flex-wrap:wrap}
 #token{flex:1;min-width:220px}
@@ -111,5 +112,8 @@ label.bulk:has(input:disabled){cursor:not-allowed}
 .wait{font-weight:600}
 .wait-warn{color:var(--warn)}
 .wait-long{color:var(--bad)}
+.wait-check{font-style:italic;opacity:.7}
+.wait-check.done{visibility:hidden}
+#waitbanner[hidden]{display:none}
 #waitbox{display:flex;gap:.3rem;align-items:center}
 #waitbox[hidden]{display:none}

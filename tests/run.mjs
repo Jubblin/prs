@@ -95,8 +95,8 @@ await test('waiting tab: filtered, de-duplicated, oldest first, threshold persis
   const titles = () => page.locator('#list .row-title').allInnerTexts();
   assert.deepEqual((await titles()).map((t) => t.trim()), ['Bump deps', 'Draft: refactor router', 'Closed PR', 'Add dark mode']);
   assert.equal(await txt(page, '#tabs button[aria-selected=true] .count'), '4');
-  assert.match(await txt(page, '#list li:first-child .wait'), /waiting 40 days \(long overdue\)/);
-  assert.match(await txt(page, '#list li:last-child .wait'), /^waiting 8 days$/);
+  assert.match(await txt(page, '#list li:first-child .wait'), /waiting 40 days \(since opened, long overdue\)/);
+  assert.match(await txt(page, '#list li:last-child .wait'), /^waiting 8 days \(since opened\)$/);
   assert.equal(await page.locator('#list li:last-child .wait-warn').count(), 1);
   // own/closed/draft stay unselectable
   assert.equal(await row(page, 'Draft: refactor router').locator('input').isDisabled(), true);
