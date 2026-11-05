@@ -34,7 +34,7 @@ function loadWaitCache() {
     const o = JSON.parse(localStorage.getItem(WAIT_CACHE_KEY) || '{}');
     for (const [id, e] of Object.entries(o)) {
       if (e && typeof e === 'object' && typeof e.u === 'string' && typeof e.p === 'string' && typeof e.m === 'string' && typeof e.s === 'number'
-        && (e.t === null || typeof e.t === 'number') && ['requested', 'assigned', 'opened'].includes(e.k)) m.set(id, { m: e.m, u: e.u, p: e.p, t: e.t, k: e.k, x: e.x === true, s: e.s });
+        && (e.t === null || typeof e.t === 'number') && ['requested', 'assigned', 'opened'].includes(e.k)) m.set(id, { m: e.m, u: e.u, p: e.p, t: e.t, k: e.k, g: typeof e.g === 'string' ? e.g : undefined, x: e.x === true, s: e.s });
     }
   } catch { /* ignore a corrupt cache */ }
   return m;
@@ -531,19 +531,50 @@ $('bulkall').addEventListener('click', () => {
 });
 $('bulkapprove').addEventListener('click', openBulk);
 
+const WAIT_FMT = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
+// 'Mon 27 Oct 2026, 14:03 (BST)' in the user's local time zone.
+function fmtExact(ms) {
+  const p = Object.fromEntries(WAIT_FMT.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return `${p.weekday} ${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute} (${p.timeZoneName})`;
+}
+// What the age is measured from: { label, ms }.
+function waitSource(i, checking) {
+  const e = waitEntry(i);
+  if (e && e.t !== null) return { ms: e.t, label: e.k === 'assigned' ? 'Assigned' : e.g ? 'Requested via team ' + e.g : 'Review requested' };
+  return { ms: new Date(i.created_at).getTime(), label: checking ? 'Opened (checking for a request/assignment event…)' : 'Opened (no request/assignment event found)' };
+}
 function waitBadge(i, now) {
   const d = ageDays(i, now), strong = d > WAIT_STRONG;
   const e = waitEntry(i);
   const how = e && e.t !== null ? (e.k === 'assigned' ? 'since assigned' : 'since requested') : 'since opened';
   const checking = state.waitPending.has(i.id) && !(e && e.u === i.updated_at);
+  const src = waitSource(i, checking), tipId = 'waitdesc-' + i.id;
+  const when = h('time', { datetime: new Date(src.ms).toISOString() }, fmtExact(src.ms));
+  const desc = h('span', { class: 'sr-only', id: tipId }, src.label + ' ', when);
+  const text = `${src.label} ${fmtExact(src.ms)}`;
+  // A real button: reachable with Tab, announced with its description, tap/Enter/Space shows the overlay (no hover-only access).
+  const btn = h('button', { type: 'button', class: 'wait ' + (strong ? 'wait-long' : 'wait-warn'), title: text, 'aria-describedby': tipId,
+    onclick: (e) => { e.stopPropagation(); showWaitTip(btn, desc); }, onfocus: () => showWaitTip(btn, desc), onblur: hideWaitTip,
+    onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Escape') hideWaitTip(); } },
+    `waiting ${d} ${d === 1 ? 'day' : 'days'} (${how}${strong ? ', long overdue' : ''})`);
   // The hidden sizer holds the longest possible text so the row keeps the same width and height whatever the label becomes.
-  return [h('span', { class: 'wait-wrap' },
-    h('span', { class: 'wait ' + (strong ? 'wait-long' : 'wait-warn') }, `waiting ${d} ${d === 1 ? 'day' : 'days'} (${how}${strong ? ', long overdue' : ''})`),
-    h('span', { class: 'wait-size', 'aria-hidden': 'true' }, 'waiting 888 days (since requested, long overdue)')),
+  return [h('span', { class: 'wait-wrap' }, btn, h('span', { class: 'wait-size', 'aria-hidden': 'true' }, 'waiting 888 days (since requested, long overdue)'), desc),
     h('span', { class: 'wait-check' + (checking ? '' : ' done') }, 'checking…')];
 }
+// One shared overlay (position: fixed, so showing it never reflows the list).
+function hideWaitTip() { const t = $('waittip'); if (t) t.hidden = true; }
+function showWaitTip(btn, desc) {
+  const t = $('waittip'); t.replaceChildren(...[...desc.childNodes].map((n) => n.cloneNode(true)));
+  t.hidden = false;
+  const r = btn.getBoundingClientRect(), w = t.offsetWidth, hgt = t.offsetHeight;
+  t.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  t.style.top = (r.bottom + hgt + 8 < window.innerHeight ? r.bottom + 4 : Math.max(8, r.top - hgt - 4)) + 'px';
+}
+window.addEventListener('scroll', hideWaitTip, { passive: true });
+window.addEventListener('resize', hideWaitTip);
+document.addEventListener('click', (e) => { if (!e.target.closest || !e.target.closest('.wait')) hideWaitTip(); });
 function buildList(ul) {
-  clear(ul);
+  clear(ul); hideWaitTip();
   pruneSelection(); renderToolbar();
   const items = visibleItems();
   if (!items.length) { put(ul, h('li', { class: 'empty' }, state.tab === 'waiting' ? `Nothing has been waiting on you for more than ${state.waitDays} days.` : 'Nothing here.')); return; }
@@ -556,7 +587,7 @@ function buildList(ul) {
     const bulk = i.pull_request ? h('label', { class: 'bulk', title: reason || 'Select for bulk approve', onclick: (e) => e.stopPropagation() },
       h('input', { type: 'checkbox', 'aria-label': reason ? `${where} cannot be selected. ${reason}` : `Select ${where} for bulk approve`, disabled: !!reason, checked: !reason && state.sel.has(i.id),
         onchange: (e) => toggleSel(i, e.target.checked) })) : null;
-    put(ul, h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT') select(i); } },
+    put(ul, h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') select(i); } },
       h('div', { class: 'row-title' }, bulk, i.title),
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
@@ -669,13 +700,13 @@ function waitFromEvents(events, me, p) {
   }
   const paths = []; // { t, k } or 'none' (no event) or 'removed'
   if (p.includes('r')) {
-    const teamT = teams.size ? Math.max(...teams.values()) : undefined;
-    const t = userReq !== undefined ? userReq : teamT;
-    paths.push(t !== undefined ? { t, k: 'requested' } : userSeen ? 'removed' : 'none');
+    const teamBest = [...teams].reduce((a, b) => (!a || b[1] > a[1] ? b : a), null);
+    const t = userReq !== undefined ? userReq : teamBest ? teamBest[1] : undefined;
+    paths.push(t !== undefined ? { t, k: 'requested', g: userReq !== undefined ? undefined : teamBest[0] } : userSeen ? 'removed' : 'none');
   }
   if (p.includes('a')) paths.push(assignAt !== undefined ? { t: assignAt, k: 'assigned' } : assignSeen ? 'removed' : 'none');
   const live = paths.filter((x) => x && x.t !== undefined);
-  if (live.length) { const w = live.reduce((a, b) => (b.t < a.t ? b : a)); return { t: w.t, k: w.k, x: false }; }
+  if (live.length) { const w = live.reduce((a, b) => (b.t < a.t ? b : a)); return { t: w.t, k: w.k, g: w.g, x: false }; }
   if (paths.includes('none')) return { t: null, k: 'opened', x: false };
   return { t: null, k: 'opened', x: true };
 }
@@ -716,7 +747,7 @@ async function loadWaitTimes() {
       try {
         const r = waitFromEvents(await fetchEvents(i), state.me, p);
         if (stale()) return;
-        state.waitCache.set(String(i.id), { m: state.me.toLowerCase(), u: i.updated_at, p, t: r.t, k: r.k, x: r.x, s: Date.now() });
+        state.waitCache.set(String(i.id), { m: state.me.toLowerCase(), u: i.updated_at, p, t: r.t, k: r.k, g: r.g, x: r.x, s: Date.now() });
         saveWaitCache();
       } catch (e) {
         if (stale()) return;
