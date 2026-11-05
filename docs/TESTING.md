@@ -33,11 +33,11 @@ How it works: `tests/lib.mjs` serves the repo root on a random localhost port; `
 
 ## What the automated checks cover (all against the mock)
 
-Sign-in/401/sign-out; persistence of tab, repo and auto interval (and fallback for bad saved values); five tabs, counts, merged assigned/mentioned query; owner-grouped repo filter, `<owner> — all repos`, case-insensitive restore; text filter; CI states (success, failure, pending, none, `no access` on 403, `error` on 500, per-PR failure) and review states, permission banner; `null` mergeable retry; rate-limit banner; detail panel content; XSS payloads in body, comments and titles; link and image allow-list cases; failing-image fallback; own/closed/draft gating; comment/approve/request-changes/merge/close/reopen including 422/403/404/405/429/500 responses and merge confirm; bulk approve (selectability reasons, selection pruning, dialog focus and Esc, shared comment, partial failure, retry, 429 stop, 401 stop); manual refresh keeping scroll, refresh failure keeping data, sticky header; auto-refresh timer (fake clock) and Off; keyboard shortcuts and their guards; CSP policy and enforcement (inline script, foreign fetch and foreign image blocked); hosts contacted; no overflow at phone width.
+Sign-in/401/sign-out; persistence of tab, repo and auto interval (and fallback for bad saved values); six tabs, counts, Waiting on me tab (threshold 3/7/14/30, persistence, invalid value fallback, de-duplication, empty state), merged assigned/mentioned query; owner-grouped repo filter, `<owner> — all repos`, case-insensitive restore; text filter; CI states (success, failure, pending, none, `no access` on 403, `error` on 500, per-PR failure) and review states, permission banner; `null` mergeable retry; rate-limit banner; detail panel content; XSS payloads in body, comments and titles; link and image allow-list cases; failing-image fallback; own/closed/draft gating; comment/approve/request-changes/merge/close/reopen including 422/403/404/405/429/500 responses and merge confirm; bulk approve (selectability reasons, selection pruning, dialog focus and Esc, shared comment, partial failure, retry, 429 stop, 401 stop); manual refresh keeping scroll, refresh failure keeping data, sticky header; auto-refresh timer (fake clock) and Off; keyboard shortcuts and their guards; CSP policy and enforcement (inline script, foreign fetch and foreign image blocked); hosts contacted; no overflow at phone width.
 
 ## Verified vs. NOT verified
 
-**Verified against mocked APIs** (50 checks, all passing at the time of writing): everything listed above, in Chromium headless only.
+**Verified against mocked APIs** (52 checks, all passing at the time of writing): everything listed above, in Chromium headless only.
 
 **NOT verified on real GitHub / real browsers:**
 - The mock is written from our reading of the API, not generated from it. Real response shapes, pagination (`per_page=100` only, no paging), search ranking, and field availability (e.g. fine-grained-token 403 vs 404 behaviour, `mergeable_state` values, `check-runs` for forks) may differ.
@@ -61,8 +61,9 @@ Use the smoke-test setup below. Tick each item; the automated check covering it 
 - [ ] Revoke the token on GitHub, then Refresh → "Token rejected (401)" and you are signed out.
 
 ### Tabs, repo filter, text filter
-- [ ] Each tab shows the right items and count; `1`–`5` switch tabs.
+- [ ] Each tab shows the right items and count; `1`–`6` switch tabs.
 - [ ] Assigned/mentioned tab shows each PR once even if both queries match.
+- [ ] Waiting on me (`6`): lists review-requested/assigned items older than the threshold, each once, oldest first, with `waiting N days` (red + "long overdue" beyond 14); changing 3/7/14/30 updates at once and survives reload; bad saved value → 7; empty state text names the threshold; bulk select still refuses own/closed/draft.
 - [ ] Repo dropdown groups by owner; `<owner> — all repos` shows every repo of that owner; a single repo narrows further; All repos clears.
 - [ ] Repo choice persists across reload; if that repo is not in the current tab the dropdown shows All repos (and the list is unfiltered).
 - [ ] Text filter matches title, `owner/repo`, and number; "Nothing here." when empty.
@@ -129,7 +130,7 @@ Reproduce with DevTools request blocking/overrides, a read-only token, or a toke
 - [ ] Header, tabs, filters and bulk bar stay visible while scrolling.
 
 ### Keyboard shortcuts
-- [ ] `1`–`5`, `j`/`↓`, `k`/`↑`, `Enter`/`o`, `g` (new tab), `r`, `/`, `Esc`, `?` all behave as listed in the README.
+- [ ] `1`–`6`, `j`/`↓`, `k`/`↑`, `Enter`/`o`, `g` (new tab), `r`, `/`, `Esc`, `?` all behave as listed in the README.
 - [ ] Nothing fires while typing in the filter/comment box, with Ctrl/Alt/Meta, or while the bulk dialog is open; only `Esc`/`?` work while help is open.
 - [ ] There is no shortcut for approve, merge or bulk approve.
 
@@ -152,6 +153,6 @@ Use a **throwaway account or repo**, never a repo you care about.
 1. Create a private repo `prs-smoke` and a **fine-grained token** limited to that repo with Pull requests R/W, Issues R/W, Metadata R, Checks R, Commit statuses R, Contents R/W. Set a 1-day expiry. (A second account or collaborator is needed to open PRs that you can approve; otherwise you can only test own-PR gating.)
 2. In the repo create: a PR from your account (own PR), a PR from the second account requesting your review (add a workflow that fails or passes if you want CI), a draft PR, an issue assigned to you, and a PR containing an `evil.example` image and a `<script>` in its body.
 3. `python3 -m http.server 8000`, open <http://localhost:8000>, sign in.
-4. Check: all five tabs list the right items; CI/Review labels match GitHub; the evil image is a link and no script runs; own-PR approve is disabled; approve the review-requested PR and see it on GitHub; comment on it; bulk approve two PRs; close and reopen the issue; merge the PR (confirm).
+4. Check: all six tabs list the right items; CI/Review labels match GitHub; the evil image is a link and no script runs; own-PR approve is disabled; approve the review-requested PR and see it on GitHub; comment on it; bulk approve two PRs; close and reopen the issue; merge the PR (confirm).
 5. DevTools → Network contains only `api.github.com` and GitHub image hosts; Console has no errors.
 6. Sign out, then **delete the token** (and the repo if finished).

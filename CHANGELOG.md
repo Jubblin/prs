@@ -2,6 +2,11 @@
 
 All notable changes to this project, grouped by pull request. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Added
+- "Waiting on me" tab: review-requested and assigned items open longer than 3/7/14/30 days (default 7), oldest first, with "waiting N days" on each row; shortcut `6`
+
 ## 2026-10-30
 
 ### Added

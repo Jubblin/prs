@@ -72,13 +72,52 @@ await test('persistence: unknown saved tab/auto values fall back to defaults', a
 }, { storage: { gh_dashboard_tab: 'bogus', gh_dashboard_autorefresh: '99' } });
 
 // ---- tabs and filters ----
-await test('tabs: five tabs with counts; keys 1-5 switch', async ({ page }) => {
+await test('tabs: six tabs with counts; keys 1-6 switch', async ({ page }) => {
   await page.locator('#list li').first().waitFor();
-  assert.equal(await page.locator('#tabs button').count(), 5);
+  assert.equal(await page.locator('#tabs button').count(), 6);
   const counts = await page.locator('#tabs .count').allInnerTexts();
-  assert.deepEqual(counts, ['1', '5', '2', '1', '30']);
-  for (let n = 1; n <= 5; n++) { await page.keyboard.press(String(n)); assert.equal(await page.locator('#tabs button').nth(n - 1).getAttribute('aria-selected'), 'true'); }
+  assert.deepEqual(counts, ['1', '5', '2', '1', '30', '0']);
+  for (let n = 1; n <= 6; n++) { await page.keyboard.press(String(n)); assert.equal(await page.locator('#tabs button').nth(n - 1).getAttribute('aria-selected'), 'true'); }
 });
+const DAY = 86400000, daysAgo = (d) => new Date(Date.now() - d * DAY - 60000).toISOString();
+function ageItems(mock) {
+  const by = (n) => mock.items.find((i) => i.number === n);
+  // review tab: 10 (8d, also assigned), 11 draft (20d), 13 (40d), 14 (2d), 15 closed (20d); 12 only mentioned (40d); issue 20 assigned (6d)
+  for (const [n, d] of [[10, 8], [11, 20], [13, 40], [14, 2], [15, 20], [12, 40], [20, 6]]) by(n).created_at = daysAgo(d);
+  by(10).assignees = [{ login: 'me' }]; by(20).assignees = [{ login: 'me' }]; by(12).assignees = [{ login: 'someone' }];
+}
+await test('waiting tab: filtered, de-duplicated, oldest first, threshold persists', async ({ page, mock }) => {
+  ageItems(mock);
+  await page.locator('#refresh').click(); await page.locator('#list li').first().waitFor(); await settled(page);
+  await page.keyboard.press('6');
+  assert.equal(await page.locator('#waitbox').isVisible(), true);
+  assert.equal(await page.locator('#waitdays').inputValue(), '7');
+  const titles = () => page.locator('#list .row-title').allInnerTexts();
+  assert.deepEqual((await titles()).map((t) => t.trim()), ['Bump deps', 'Draft: refactor router', 'Closed PR', 'Add dark mode']);
+  assert.equal(await txt(page, '#tabs button[aria-selected=true] .count'), '4');
+  assert.match(await txt(page, '#list li:first-child .wait'), /waiting 40 days \(long overdue\)/);
+  assert.match(await txt(page, '#list li:last-child .wait'), /^waiting 8 days$/);
+  assert.equal(await page.locator('#list li:last-child .wait-warn').count(), 1);
+  // own/closed/draft stay unselectable
+  assert.equal(await row(page, 'Draft: refactor router').locator('input').isDisabled(), true);
+  assert.equal(await row(page, 'Closed PR').locator('input').isDisabled(), true);
+  assert.equal(await row(page, 'Bump deps').locator('input').isDisabled(), false);
+  await page.locator('#waitdays').selectOption('3');
+  assert.equal(await page.locator('#list li').count(), 5); // + issue 20 (6d)
+  await page.locator('#waitdays').selectOption('30');
+  assert.deepEqual((await titles()).map((t) => t.trim()), ['Bump deps']);
+  await page.reload(); await page.locator('#list li').first().waitFor();
+  assert.equal(await page.locator('#waitdays').inputValue(), '30');
+  assert.match(await txt(page, '#tabs button[aria-selected=true]'), /Waiting on me/);
+  await page.locator('#waitdays').selectOption('7');
+  await page.locator('#textfilter').fill('zzz');
+  assert.equal((await txt(page, '#list li.empty')).trim(), 'Nothing has been waiting on you for more than 7 days.');
+});
+await test('waiting tab: invalid saved threshold falls back to 7; empty state', async ({ page }) => {
+  await page.keyboard.press('6');
+  assert.equal(await page.locator('#waitdays').inputValue(), '7');
+  assert.equal((await txt(page, '#list li.empty')).trim(), 'Nothing has been waiting on you for more than 7 days.');
+}, { storage: { gh_dashboard_waiting_days: '5' } });
 await test('tabs: assigned/mentioned PR tab merges two queries', async ({ page, mock }) => {
   await tab(page, 3);
   assert.equal(await page.locator('#list li').count(), 2);
