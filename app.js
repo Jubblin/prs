@@ -534,6 +534,7 @@ $('bulkapprove').addEventListener('click', openBulk);
 const WAIT_FMT = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
 // 'Mon 27 Oct 2026, 14:03 (BST)' in the user's local time zone.
 function fmtExact(ms) {
+  if (!Number.isFinite(ms) || Number.isNaN(new Date(ms).getTime())) return 'date unknown';
   const p = Object.fromEntries(WAIT_FMT.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
   return `${p.weekday} ${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute} (${p.timeZoneName})`;
 }
@@ -549,13 +550,14 @@ function waitBadge(i, now) {
   const how = e && e.t !== null ? (e.k === 'assigned' ? 'since assigned' : 'since requested') : 'since opened';
   const checking = state.waitPending.has(i.id) && !(e && e.u === i.updated_at);
   const src = waitSource(i, checking), tipId = 'waitdesc-' + i.id;
-  const when = h('time', { datetime: new Date(src.ms).toISOString() }, fmtExact(src.ms));
+  const okDate = Number.isFinite(new Date(src.ms).getTime());
+  const when = h('time', okDate ? { datetime: new Date(src.ms).toISOString() } : {}, fmtExact(src.ms));
   const desc = h('span', { class: 'sr-only', id: tipId }, src.label + ' ', when);
   const text = `${src.label} ${fmtExact(src.ms)}`;
   // A real button: reachable with Tab, announced with its description, tap/Enter/Space shows the overlay (no hover-only access).
   const btn = h('button', { type: 'button', class: 'wait ' + (strong ? 'wait-long' : 'wait-warn'), title: text, 'aria-describedby': tipId,
     onclick: (e) => { e.stopPropagation(); showWaitTip(btn, desc); }, onfocus: () => showWaitTip(btn, desc), onblur: hideWaitTip,
-    onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Escape') hideWaitTip(); } },
+    onkeydown: (e) => { if (e.key === 'Escape' && !$('waittip').hidden) { e.stopPropagation(); hideWaitTip(); } } },
     `waiting ${d} ${d === 1 ? 'day' : 'days'} (${how}${strong ? ', long overdue' : ''})`);
   // The hidden sizer holds the longest possible text so the row keeps the same width and height whatever the label becomes.
   return [h('span', { class: 'wait-wrap' }, btn, h('span', { class: 'wait-size', 'aria-hidden': 'true' }, 'waiting 888 days (since requested, long overdue)'), desc),

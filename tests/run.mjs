@@ -204,6 +204,35 @@ await test('waiting tab: exact date per source as tooltip, keyboard focus, scree
   const o = await info('Add dark mode');
   assert.match(o.title, new RegExp(`^Opened \\(no request/assignment event found\\) ${DATE}$`));
 }, { storage: { gh_dashboard_tab: 'waiting' }, viewport: { width: 375, height: 800 } });
+await test('waiting tab: shortcuts work with the date label focused; team slug HTML stays inert; bad dates never print Invalid Date', async ({ page, mock }) => {
+  timeline(mock);
+  const by = (n) => mock.items.find((x) => x.number === n);
+  by(13).events = [{ event: 'review_requested', created_at: evAt(12), requested_team: { slug: '<img src=x onerror=window.__xss=9>' } }];
+  await page.locator('#refresh').click(); await settled(page);
+  await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
+  const btn = row(page, 'Bump deps').locator('button.wait');
+  await btn.focus();
+  assert.match(await txt(page, '#waittip'), /^Requested via team <img src=x onerror=window\.__xss=9> /);
+  assert.equal(await page.locator('#waittip img').count(), 0);
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  await page.keyboard.press('j');
+  assert.equal(await page.locator('#list li.cur').count(), 1, 'j moves the cursor while the label is focused');
+  await page.keyboard.press('?');
+  assert.equal(await page.locator('#helpoverlay').isVisible(), true, '? opens help while the label is focused');
+  await page.keyboard.press('Escape');
+  await btn.focus(); await page.keyboard.press('2');
+  assert.equal(await txt(page, '#tabs button[aria-selected=true]').then((t) => /\S/.test(t)), true);
+  assert.notEqual(await page.evaluate(() => localStorage.getItem('gh_dashboard_tab')), 'waiting', '2 switches tab');
+}, { storage: { gh_dashboard_tab: 'waiting' } });
+await test('waiting tab: invalid created_at shows no Invalid Date/null/undefined', async ({ page, mock }) => {
+  timeline(mock);
+  mock.items.find((x) => x.number === 20).created_at = 'garbage';
+  mock.items.find((x) => x.number === 20).events = [];
+  await page.locator('#refresh').click(); await settled(page);
+  await page.waitForTimeout(800);
+  const all = await page.evaluate(() => document.body.innerText + [...document.querySelectorAll('[title]')].map((e) => e.title).join(' ') + document.getElementById('waittip').textContent);
+  assert.doesNotMatch(all, /Invalid Date|undefined|\bnull\b/);
+}, { storage: { gh_dashboard_tab: 'waiting' } });
 await test('waiting tab: events failure falls back to opened date with one banner', async ({ page, mock }) => {
   timeline(mock);
   mock.fail('GET', '/events', 403, { message: 'Resource not accessible by personal access token' });
