@@ -322,11 +322,89 @@ function ago(iso) {
 }
 const repoOf = (i) => i.repository_url.split('/').slice(-2).join('/');
 
+// ---- token permission check (read-only GETs only; never sends or shows the token beyond the Authorization header) ----
+const CHECK_QUERIES = ['is:pr is:open author:@me', 'is:pr is:open review-requested:@me', 'is:issue is:open author:@me', 'is:issue is:open assignee:@me'];
+async function probe(token, path) {
+  try {
+    const res = await fetch(API + path, { headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + token, 'X-GitHub-Api-Version': '2022-11-28' } });
+    return { status: res.status, ok: res.ok, json: res.ok ? await res.json().catch(() => null) : null };
+  } catch { return { status: 0, ok: false, json: null }; }
+}
+// Returns [{ label, state: 'ok'|'missing'|'unverifiable'|'error', note }]
+async function checkToken(token) {
+  const out = [];
+  const add = (label, state, note = '') => out.push({ label, state, note });
+  const grade = (label, r, perm) => {
+    if (r.ok) add(label, 'ok');
+    else if (r.status === 403 || r.status === 404) add(label, 'missing', perm);
+    else add(label, 'error', r.status ? 'HTTP ' + r.status : 'network error');
+    return r.ok;
+  };
+  const user = await probe(token, '/user');
+  if (user.status === 401) { add('Authenticate (/user)', 'error', 'Token rejected (401)'); return out; }
+  if (!user.ok) { add('Authenticate (/user)', 'error', user.status ? 'HTTP ' + user.status : 'network error'); return out; }
+  add('Authenticate (/user)', 'ok');
+  let pr = null, issue = null, searchOk = false;
+  for (const q of CHECK_QUERIES) {
+    const r = await probe(token, '/search/issues?q=' + encodeURIComponent(q) + '&per_page=5');
+    if (r.ok) searchOk = true;
+    else { if (!searchOk) break; continue; }
+    for (const it of (r.json && r.json.items) || []) {
+      if (!it.repository_url) continue;
+      const t = { repo: repoOf(it), number: it.number };
+      if (it.pull_request) pr = pr || t; else issue = issue || t;
+    }
+    if (pr && issue) break;
+  }
+  if (!searchOk) add('Search (/search/issues)', 'error', 'Search failed');
+  else add('Search (/search/issues)', 'ok');
+  const none = 'No pull request found to test with';
+  if (pr) {
+    const pull = await probe(token, `/repos/${pr.repo}/pulls/${pr.number}`);
+    grade('Pull requests: Read', pull, PERM_HINT.reviews);
+    grade('Pull request reviews: Read', await probe(token, `/repos/${pr.repo}/pulls/${pr.number}/reviews`), PERM_HINT.reviews);
+    const sha = pull.ok && pull.json && pull.json.head && pull.json.head.sha;
+    if (sha) {
+      grade(PERM_HINT.checks, await probe(token, `/repos/${pr.repo}/commits/${sha}/check-runs`), PERM_HINT.checks);
+      grade(PERM_HINT.combined, await probe(token, `/repos/${pr.repo}/commits/${sha}/status`), PERM_HINT.combined);
+    } else {
+      add(PERM_HINT.checks, 'unverifiable', 'Needs Pull requests: Read first');
+      add(PERM_HINT.combined, 'unverifiable', 'Needs Pull requests: Read first');
+    }
+  } else {
+    for (const l of ['Pull requests: Read', 'Pull request reviews: Read', PERM_HINT.checks, PERM_HINT.combined]) add(l, 'unverifiable', none);
+  }
+  const repo = (issue || pr || {}).repo;
+  if (issue) grade('Issues: Read', await probe(token, `/repos/${issue.repo}/issues/${issue.number}`), 'Issues: Read');
+  else if (pr) grade('Issues: Read', await probe(token, `/repos/${pr.repo}/issues/${pr.number}`), 'Issues: Read');
+  else add('Issues: Read', 'unverifiable', 'No issue or pull request found to test with');
+  if (repo) grade('Contents: Read', await probe(token, `/repos/${repo}/contents/`), 'Contents: Read');
+  else add('Contents: Read', 'unverifiable', 'No repository found to test with');
+  add('Contents: Write', 'unverifiable', 'Cannot verify - needed only to merge');
+  return out;
+}
+const CHECK_ICON = { ok: '✓ ok', missing: '✗ missing', unverifiable: '? unverifiable', error: '! error' };
+async function runTokenCheck(token) {
+  const box = $('tokencheck');
+  box.hidden = false;
+  if (!token) { clear(box); put(box, h('p', {}, 'Enter a token first.')); return; }
+  clear(box); put(box, h('p', {}, 'Checking token…'));
+  $('checktoken').disabled = $('checklogin').disabled = true;
+  try {
+    const res = await checkToken(token);
+    clear(box);
+    put(box, h('ul', {}, res.map((r) => h('li', { class: 'chk-' + r.state }, h('span', { class: 'chk-state' }, CHECK_ICON[r.state]), ' ', r.label, r.note ? ' — ' + r.note : ''))));
+  } finally { $('checktoken').disabled = $('checklogin').disabled = false; }
+}
+$('checklogin').addEventListener('click', () => runTokenCheck($('token').value.trim()));
+$('checktoken').addEventListener('click', () => runTokenCheck(state.token));
+
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
   state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); state.waitCache.clear(); state.waitFail.clear(); state.waitPending.clear(); state.waitRun++; localStorage.removeItem(WAIT_CACHE_KEY); $('waitbanner').hidden = true; closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
   renderUpdated(); showView(); scheduleAuto();
+  $('tokencheck').hidden = true;
 }
 function showView() {
   const on = !!state.token;

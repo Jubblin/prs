@@ -23,6 +23,7 @@
           <option value="10">10 min</option>
         </select>
       </label>
+      <button id="checktoken" type="button">Check token</button>
       <button id="signout" type="button">Sign out</button>
     </div>
   </header>
@@ -54,6 +55,8 @@
   <div id="waittip" role="tooltip" hidden></div>
   <div id="waitbanner" role="status" hidden></div>
 
+  <div id="tokencheck" role="status" hidden></div>
+
   <main>
     <section id="login" hidden>
       <h2>Sign in</h2>
@@ -61,6 +64,7 @@
       <form id="loginform">
         <input id="token" type="password" autocomplete="off" placeholder="github_pat_..." required>
         <button type="submit">Sign in</button>
+        <button id="checklogin" type="button">Check token</button>
       </form>
     </section>
 

@@ -34,6 +34,8 @@ Any static host works (e.g. GitHub Pages); there is nothing to build. Paste a to
 
 Shortcut: `scripts/create-pat.sh` opens GitHub's token page pre-filled with these permissions (`--no-merge` for Contents: read, `--print` to just show the URL) and can check the pasted token works. GitHub has no API to create fine-grained tokens, so you still click Generate.
 
+**Check token** (sign-in screen and header) probes the token with read-only GETs against a repo from your own PR/issue search results and lists each permission as ok, missing (named as above) or unverifiable. Contents: Write cannot be proven without a write, so it is reported as "cannot verify - needed only to merge". No write calls are made and the token is never shown.
+
 Without Checks / Commit statuses / Pull requests read access the CI or Review column shows "no access" or "unknown" and a banner names the missing permission.
 
 ## Features
@@ -146,7 +148,7 @@ Automated end-to-end checks run against an in-memory fake of the GitHub API (dev
 
 ```sh
 cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
-node tests/run.mjs        # 50 checks, exit code 1 on failure
+node tests/run.mjs        # 52 checks, exit code 1 on failure
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 

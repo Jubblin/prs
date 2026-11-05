@@ -21,6 +21,12 @@ button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
 #banner.info{background:var(--warn)}
 #waitbanner{padding:.4rem 1rem;background:var(--warn);color:#fff;font-size:.9em}
 #permbanner{padding:.4rem 1rem;background:var(--warn);color:#fff;font-size:.9em}
+#tokencheck{padding:.4rem 1rem;border-bottom:1px solid var(--border);font-size:.9em}
+#tokencheck ul{margin:0;padding:0;list-style:none}
+.chk-ok .chk-state{color:var(--ok)}
+.chk-missing .chk-state,.chk-error .chk-state{color:var(--bad)}
+.chk-unverifiable .chk-state{color:var(--warn)}
+.chk-state{display:inline-block;min-width:8em;font-weight:600}
 #loginform{display:flex;gap:.5rem;flex-wrap:wrap}
 #token{flex:1;min-width:220px}
 #tabs{display:flex;gap:.25rem;flex-wrap:wrap;border-bottom:1px solid var(--border)}

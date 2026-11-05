@@ -110,3 +110,37 @@ report "authenticate (GET /user)" "$user_code"
 if [ "$user_code" = "200" ]; then
   report "search PRs (GET /search/issues)" "$(api '/search/issues?q=is:pr+author:@me&per_page=1')"
 fi
+
+if [ "$user_code" = "200" ] && command -v python3 >/dev/null 2>&1; then
+  # Pick a PR and an issue from the user's own search results (read-only GETs).
+  pick() {
+    curl -sS -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/search/issues?q=$1&per_page=1" |
+      python3 -c 'import sys,json
+try:
+  i=json.load(sys.stdin)["items"][0]; print(i["repository_url"].split("/repos/")[1], i["number"])
+except Exception: pass'
+  }
+  read -r pr_repo pr_num <<<"$(pick 'is:pr+is:open+author:@me')"
+  read -r is_repo is_num <<<"$(pick 'is:issue+is:open+author:@me')"
+  if [ -n "${pr_repo:-}" ]; then
+    report "pull requests read (GET pulls/$pr_num)" "$(api "/repos/$pr_repo/pulls/$pr_num")"
+    report "reviews read (Pull requests: Read)" "$(api "/repos/$pr_repo/pulls/$pr_num/reviews")"
+    sha="$(curl -sS -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$pr_repo/pulls/$pr_num" |
+      python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["head"]["sha"])
+except Exception: pass')"
+    if [ -n "$sha" ]; then
+      report "checks read (Checks: Read)" "$(api "/repos/$pr_repo/commits/$sha/check-runs")"
+      report "commit statuses read (Commit statuses: Read)" "$(api "/repos/$pr_repo/commits/$sha/status")"
+    fi
+  else
+    echo "  ?     no PR found to test pulls/reviews/checks/statuses"
+  fi
+  if [ -n "${is_repo:-}" ]; then
+    report "issues read (Issues: Read)" "$(api "/repos/$is_repo/issues/$is_num")"
+  fi
+  c_repo="${pr_repo:-${is_repo:-}}"
+  [ -z "$c_repo" ] || report "contents read (Contents: Read)" "$(api "/repos/$c_repo/contents/")"
+  echo "  ?     Contents: Write cannot be verified - needed only to merge"
+fi
