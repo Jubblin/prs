@@ -153,7 +153,7 @@ bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 
-These checks use mocked responses only; behaviour on real GitHub still needs the manual smoke test.
+These checks run in CI on every pull request and on push to `main` (`.github/workflows/tests.yml`). They use mocked responses only; behaviour on real GitHub still needs the manual smoke test.
 
 ## Screenshots
 

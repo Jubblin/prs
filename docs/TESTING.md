@@ -15,7 +15,7 @@ Needs Node 20+ (tested on 22). Install Playwright **inside `tests/`** without to
 ```sh
 cd tests
 npm install --no-save --no-package-lock playwright
-npx playwright install chromium
+npx playwright install chromium   # CI also passes --with-deps
 cd ..
 ```
 
@@ -27,6 +27,8 @@ node tests/run.mjs bulk       # only checks whose name contains "bulk"
 bash tests/create-pat.test.sh # shell checks for scripts/create-pat.sh (no network)
 node tests/shots.mjs          # regenerate docs/img/*.png from the mock
 ```
+
+CI runs both suites (`node tests/run.mjs` and `bash tests/create-pat.test.sh`) with exactly these commands on every pull request and on push to `main` (`.github/workflows/tests.yml`). It uses mocked responses only, so it needs no secrets and does not touch real GitHub.
 
 If Playwright lives elsewhere, point Node at it: `NODE_PATH=/path/to/node_modules node tests/run.mjs`.
 
