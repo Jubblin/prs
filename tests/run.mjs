@@ -278,18 +278,6 @@ for (const how of ['manual', 'auto']) {
     assert.deepEqual(after, before, 'scroll, text, focus and caret unchanged');
   }, tall);
 }
-await test('detail: item that leaves the list closes the panel cleanly; unsent text keeps it open', async ({ page, mock }) => {
-  await tab(page, 2); await settled(page);
-  const drop = (title) => { const x = mock.items.find((i) => i.title === title); mock.items.splice(mock.items.indexOf(x), 1); };
-  await open_(page, 'Add dark mode'); await markOld(page); drop('Add dark mode');
-  await page.evaluate(() => document.getElementById('refresh').click()); await rebuilt(page);
-  assert.equal((await detailState(page)).hidden, true, 'panel closed');
-  assert.equal(await page.locator('#list li.sel').count(), 0);
-  await open_(page, 'Draft: refactor router'); await page.locator('#detail textarea').fill('keep me'); await markOld(page); drop('Draft: refactor router');
-  await page.evaluate(() => document.getElementById('refresh').click()); await rebuilt(page);
-  const s = await detailState(page);
-  assert.equal(s.hidden, false, 'panel with unsent text stays open'); assert.equal(s.val, 'keep me');
-});
 await test('waiting tab: shortcuts work with the date label focused; team slug HTML stays inert; bad dates never print Invalid Date', async ({ page, mock }) => {
   timeline(mock);
   const by = (n) => mock.items.find((x) => x.number === n);

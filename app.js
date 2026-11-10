@@ -546,7 +546,6 @@ async function refresh(auto = false) {
   state.lastAttempt = Date.now();
   if (results.some(Boolean)) state.lastUpdated = state.lastAttempt;
   const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
-  dropGoneSelection();
   renderTabs(); renderRepos(); renderList(); renderUpdated();
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
   syncDetail();
@@ -554,15 +553,6 @@ async function refresh(auto = false) {
   if (paused()) return;
   loadPrStatuses();
   loadWaitTimes();
-}
-
-// The open detail panel is never re-rendered by a refresh (scroll, focus, typed text stay as they are). If its item has left the
-// current tab it is closed cleanly, unless there is unsent comment text: then the panel stays so nothing typed is lost.
-function dropGoneSelection() {
-  if (state.selected == null || $('detail').hidden || tabItems(state.tab).some((i) => i.id === state.selected)) return;
-  const ta = $('detail').querySelector('textarea');
-  if (ta && ta.value.trim()) return;
-  closeDetail(); state.selected = null;
 }
 
 // ---- auto refresh ----
@@ -986,7 +976,7 @@ function updateWaitCount() {
 // ---- detail ----
 function closeDetail() { $('detail').hidden = true; $('layout').classList.remove('open'); }
 
-// Detail-panel UI preservation (small, isolated helpers; may overlap with the list scroll/focus fix on branch fix-list-focus).
+// Detail-panel UI preservation (small, isolated helpers; the list has its own focus restore in listFocus/restoreListFocus).
 function captureDetailUi() {
   const d = $('detail'), ta = d.querySelector('textarea'), a = document.activeElement;
   const ui = { top: d.scrollTop, text: ta ? ta.value : '', focus: null };
