@@ -168,7 +168,6 @@ await test('waiting tab: exact date per source as tooltip, keyboard focus, scree
   const by = (n) => mock.items.find((x) => x.number === n);
   await page.locator('#refresh').click(); await settled(page);
   await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
-  await page.waitForTimeout(500); // let the final status/wait re-render land before focusing
   const DATE = '\\w{3} \\d{1,2} \\w{3} \\d{4}, \\d\\d:\\d\\d \\(\\S+\\)';
   const info = (title) => row(page, title).locator('button.wait').evaluate((b) => ({ title: b.title, desc: document.getElementById(b.getAttribute('aria-describedby')).textContent, iso: document.getElementById(b.getAttribute('aria-describedby')).querySelector('time').getAttribute('datetime') }));
   const cases = [['Draft: refactor router', 'Review requested', evAt(9)], ['Bump deps', 'Requested via team core', evAt(12)], ['Assigned issue', 'Assigned', evAt(9)], ['Add dark mode', 'Assigned', evAt(7.5)]];
@@ -205,6 +204,80 @@ await test('waiting tab: exact date per source as tooltip, keyboard focus, scree
   const o = await info('Add dark mode');
   assert.match(o.title, new RegExp(`^Opened \\(no request/assignment event found\\) ${DATE}$`));
 }, { storage: { gh_dashboard_tab: 'waiting' }, viewport: { width: 375, height: 800 } });
+// ---- keyboard focus survives list re-renders ----
+const focusId = (page) => page.evaluate(() => { const a = document.activeElement, li = a && a.closest && a.closest('#list li'); return li ? { row: li.querySelector('.row-title').textContent, tag: a.tagName, cls: a.className } : { body: a === document.body, id: a.id }; });
+const markOld = (page) => page.evaluate(() => document.querySelectorAll('#list li').forEach((l) => { l.dataset.old = '1'; }));
+const rebuilt = (page) => until(async () => (await page.locator('#list li[data-old]').count()) === 0 && (await page.locator('#list .wait-check:not(.done)').count()) === 0 && (await page.locator('#list .st-loading').count()) === 0, 'list rebuilt and settled');
+const churn = (mock) => mock.items.forEach((x, n) => { if (x.pull_request) { x.updated_at = new Date(Date.now() - 1000 * (n + 1)).toISOString(); x.ci = x.ci === 'success' ? 'failure' : 'success'; } });
+const FOCUS_TARGETS = { 'row': (p) => row(p, 'Bump deps'), 'checkbox': (p) => row(p, 'Bump deps').locator('input'), 'date label with overlay': (p) => row(p, 'Bump deps').locator('button.wait') };
+const WAITING = { storage: { gh_dashboard_tab: 'waiting' } };
+for (const [what, loc] of Object.entries(FOCUS_TARGETS)) {
+  const check = async (page, manual) => {
+    const f = await focusId(page);
+    assert.equal(f.row, 'Bump deps', `${what} keeps focus after re-render`);
+    assert.equal(f.tag, what === 'row' ? 'LI' : what === 'checkbox' ? 'INPUT' : 'BUTTON');
+    if (manual) return; // the click on Refresh itself dismisses the overlay (any click outside a date label does)
+    assert.equal(await page.locator('#waittip').isVisible(), what === 'date label with overlay', 'overlay only open for the date label');
+    if (what === 'date label with overlay') assert.match(await txt(page, '#waittip'), /^Requested via team core /);
+  };
+  await test(`focus: ${what} keeps focus on manual Refresh with changed statuses`, async ({ page, mock }) => {
+    timeline(mock); await page.locator('#refresh').click(); await rebuilt(page);
+    await loc(page).focus(); await markOld(page); churn(mock);
+    await page.evaluate(() => document.getElementById('refresh').click()); // a real click would move focus to the button itself
+    await rebuilt(page); await check(page, true);
+  }, WAITING);
+  await test(`focus: ${what} keeps focus on auto refresh with changed statuses`, async ({ page, mock }) => {
+    timeline(mock); await page.clock.install(); await page.reload(); await page.locator('#list li').first().waitFor(); await rebuilt(page);
+    await loc(page).focus(); await markOld(page); churn(mock);
+    await page.clock.runFor(5 * 60 * 1000 + 2000); await rebuilt(page); await check(page);
+  }, WAITING);
+  await test(`focus: ${what} keeps focus through late status renders`, async ({ page, mock }) => {
+    timeline(mock); await page.locator('#list li').first().waitFor();
+    await row(page, 'Bump deps').waitFor(); await markOld(page); await loc(page).focus();
+    await rebuilt(page); await check(page);
+  }, WAITING);
+}
+await test('focus: not stolen from the text filter while typing through a refresh', async ({ page, mock }) => {
+  await settled(page); await page.locator('#textfilter').focus(); await page.keyboard.type('da');
+  churn(mock); await markOld(page); await page.evaluate(() => document.getElementById('refresh').click()); await rebuilt(page);
+  await page.keyboard.type('rk');
+  assert.equal(await page.locator('#textfilter').inputValue(), 'dark');
+  assert.deepEqual(await focusId(page), { body: false, id: 'textfilter' });
+});
+await test('focus: falls back to the row now in its place when the focused item vanishes', async ({ page, mock }) => {
+  timeline(mock); await page.locator('#refresh').click(); await rebuilt(page);
+  const titles = await page.locator('#list li .row-title').allInnerTexts();
+  assert.ok(titles.length >= 3);
+  await page.locator('#list li').nth(1).focus(); await markOld(page);
+  const gone = mock.items.find((x) => titles[1].includes(x.title)); gone.assignees = []; gone.requested_reviewers = []; gone.state = 'closed'; gone.vanished = true;
+  mock.items.splice(mock.items.indexOf(gone), 1);
+  await page.evaluate(() => document.getElementById('refresh').click()); await rebuilt(page);
+  const f = await focusId(page);
+  assert.equal(f.tag, 'LI', 'focus lands on a row, not the page body');
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll('#list li')].indexOf(document.activeElement)), 1);
+}, WAITING);
+// ---- the open detail panel survives refreshes ----
+const longDetail = (mock) => { const it = mock.items.find((x) => x.title === 'Add dark mode'); for (let n = 0; n < 40; n++) it.comments.push({ user: { login: 'bob' }, created_at: evAt(1), body: 'filler comment ' + n }); };
+const detailState = (page) => page.evaluate(() => { const ta = document.querySelector('#detail textarea'); return { top: document.getElementById('detail').scrollTop, hidden: document.getElementById('detail').hidden, focusTa: !!ta && document.activeElement === ta, val: ta && ta.value, sel: ta && [ta.selectionStart, ta.selectionEnd] }; });
+const tall = { viewport: { width: 1280, height: 420 } };
+for (const how of ['manual', 'auto']) {
+  await test(`detail: scroll position, typed comment, focus and caret survive ${how} refresh`, async ({ page, mock }) => {
+    longDetail(mock);
+    if (how === 'auto') { await page.clock.install(); await page.reload(); }
+    await tab(page, 2); await settled(page); await open_(page, 'Add dark mode');
+    const ta = page.locator('#detail textarea');
+    await page.evaluate(() => { const d = document.getElementById('detail'); d.scrollTop = d.scrollHeight; });
+    await ta.fill('half-written thought'); await ta.focus(); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft');
+    const before = await detailState(page);
+    assert.ok(before.top > 100, 'detail is scrolled');
+    assert.deepEqual(before.sel, [18, 18]);
+    await markOld(page); churn(mock);
+    if (how === 'manual') await page.evaluate(() => document.getElementById('refresh').click()); else await page.clock.runFor(5 * 60 * 1000 + 2000);
+    await rebuilt(page);
+    const after = await detailState(page);
+    assert.deepEqual(after, before, 'scroll, text, focus and caret unchanged');
+  }, tall);
+}
 await test('waiting tab: shortcuts work with the date label focused; team slug HTML stays inert; bad dates never print Invalid Date', async ({ page, mock }) => {
   timeline(mock);
   const by = (n) => mock.items.find((x) => x.number === n);
