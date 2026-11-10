@@ -1,6 +1,7 @@
 # GitHub PR Dashboard
 
 [![Tests](https://github.com/jubblin/prs/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/jubblin/prs/actions/workflows/tests.yml)
+[![Deploy to Pages](https://github.com/jubblin/prs/actions/workflows/pages.yml/badge.svg?branch=main)](https://github.com/jubblin/prs/actions/workflows/pages.yml)
 
 A static, no-build dashboard (plain HTML/CSS/ES modules, no dependencies) for your open pull requests and issues on GitHub. See what needs your attention, check CI and review state at a glance, and act on items without leaving the page: approve, request changes, comment, close/reopen, merge, or bulk-approve several PRs at once.
 
