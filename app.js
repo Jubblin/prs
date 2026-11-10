@@ -548,6 +548,7 @@ async function refresh(auto = false) {
   const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
   renderTabs(); renderRepos(); renderList(); renderUpdated();
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
+  syncDetail();
   scheduleAuto();
   if (paused()) return;
   loadPrStatuses();
@@ -956,12 +957,32 @@ function updateWaitCount() {
 // ---- detail ----
 function closeDetail() { $('detail').hidden = true; $('layout').classList.remove('open'); }
 
-async function select(i) {
+// Detail-panel UI preservation (small, isolated helpers; may overlap with the list scroll/focus fix on branch fix-list-focus).
+function captureDetailUi() {
+  const d = $('detail'), ta = d.querySelector('textarea'), a = document.activeElement;
+  const ui = { top: d.scrollTop, text: ta ? ta.value : '', focus: null };
+  if (ta && a === ta) ui.focus = { kind: 'ta', s: ta.selectionStart, e: ta.selectionEnd };
+  else if (a && d.contains(a) && a.tagName === 'BUTTON') ui.focus = { kind: 'btn', n: [...d.querySelectorAll('button')].indexOf(a) };
+  return ui;
+}
+function restoreDetailUi(ui) {
+  const d = $('detail'), ta = d.querySelector('textarea');
+  if (ta && ui.text) ta.value = ui.text;
+  if (ui.focus && ui.focus.kind === 'ta' && ta) { ta.focus(); try { ta.setSelectionRange(ui.focus.s, ui.focus.e); } catch (e) { /* ignore */ } }
+  else if (ui.focus && ui.focus.kind === 'btn') { const b = d.querySelectorAll('button')[ui.focus.n]; if (b && !b.disabled) b.focus(); }
+  d.scrollTop = ui.top;
+}
+
+// silent = true: re-render the open panel in place (no "Loading…", keeps scroll, typed comment and focus; errors are ignored).
+async function select(i, silent = false) {
   state.selected = i.id; state.cursor = i.id;
-  renderList();
-  const d = $('detail'); clear(d);
-  d.hidden = false; $('layout').classList.add('open');
-  put(d, h('p', {}, 'Loading…'));
+  const run = state.detailRun = (state.detailRun || 0) + 1;
+  if (!silent) {
+    renderList();
+    const d = $('detail'); clear(d);
+    d.hidden = false; $('layout').classList.add('open');
+    put(d, h('p', {}, 'Loading…'));
+  }
   try {
     const [owner, repo] = repoOf(i).split('/');
     const base = `/repos/${owner}/${repo}`;
@@ -974,9 +995,19 @@ async function select(i) {
       isPr ? getMe().catch(() => null) : null,
     ]);
     if (st) { state.status.set(i.id, st); permBanner(); }
-    if (state.selected !== i.id) return;
+    if (state.selected !== i.id || state.detailRun !== run) return;
+    const ui = silent ? captureDetailUi() : null;
+    state.detailU = i.updated_at;
     renderDetail(i, base, full, comments, files, st, me);
-  } catch (e) { banner(e.message); closeDetail(); }
+    if (ui) restoreDetailUi(ui);
+  } catch (e) { if (!silent) { banner(e.message); closeDetail(); } }
+}
+
+// After a list refresh: if the open item changed on GitHub (its updated_at moved), reload the panel in the background.
+function syncDetail() {
+  if (!state.selected || $('detail').hidden || state.busy > 0 || paused()) return;
+  const cur = SEARCH_TABS.flatMap((t) => state.data[t.id] || []).find((x) => x.id === state.selected);
+  if (cur && state.detailU && cur.updated_at !== state.detailU) select(cur, true);
 }
 
 function renderDetail(i, base, full, comments, files, st, me) {

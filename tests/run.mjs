@@ -479,6 +479,25 @@ await test('detail: shows body, comments, checks, files, state; Esc and Close cl
   await open_(page, 'Add dark mode'); await page.locator('#detail button', { hasText: 'Close' }).first().click();
   assert.equal(await page.locator('#detail').isVisible(), false);
 });
+await test('detail sync: open panel reloads when the item changes on GitHub, keeping typed text, focus and scroll', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  await page.locator('#detail textarea').fill('draft reply'); await page.locator('#detail textarea').focus();
+  await page.evaluate(() => { document.getElementById('detail').scrollTop = 0; });
+  it.title = 'Add dark mode v2'; it.comments.push({ user: { login: 'carol' }, created_at: new Date().toISOString(), body: 'fresh news' }); it.updated_at = new Date().toISOString();
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await txt(page, '#detail')).includes('fresh news'), 'detail reload');
+  assert.match(await txt(page, '#detail'), /Add dark mode v2/);
+  assert.match(await txt(page, '#detail'), /Comments \(2\)/);
+  assert.equal(await page.locator('#detail textarea').inputValue(), 'draft reply');
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('#detail textarea')), true);
+});
+await test('detail sync: unchanged item is not refetched on refresh', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  mock.calls.length = 0;
+  await page.locator('#refresh').click(); await settled(page).catch(() => {});
+  assert.equal(mock.called('GET', '/issues/10$').length, 0);
+});
 await test('XSS: scripts/handlers/javascript: links in body, comments and titles are inert', async ({ page }) => {
   await tab(page, 2); await open_(page, 'Add dark mode');
   const r = await page.evaluate(() => ({
