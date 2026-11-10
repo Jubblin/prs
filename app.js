@@ -102,7 +102,10 @@ function startPause(until, msg) {
   clearTimeout(state.pauseTimer);
   state.pauseTimer = setTimeout(() => {
     state.pauseTimer = null;
-    if (!paused()) { if ($('banner').textContent === state.pauseMsg) banner(''); state.pauseMsg = ''; }
+    if (!paused()) {
+      if ($('banner').textContent === state.pauseMsg) banner(''); state.pauseMsg = '';
+      if (state.token && state.autoMin && !autoBlocked() && document.visibilityState === 'visible') refresh(true); // automatic updates resume now; a refresh also finishes the statuses and wait times the pause interrupted
+    }
   }, Math.max(until - Date.now(), 0) + 50);
   banner(msg);
 }
@@ -112,6 +115,7 @@ async function gh(path, opts = {}) {
     const slot = Math.max(Date.now(), lastWrite + WRITE_GAP_MS);
     lastWrite = slot;
     if (slot > Date.now()) await new Promise((r) => setTimeout(r, slot - Date.now()));
+    if (paused()) throw new ApiError(state.pauseMsg || 'Rate limit active until ' + fmtTime(state.rateLimitUntil) + '.', 429); // a pause may have started while this write waited its turn
   }
   const res = await fetch(API + path, {
     method: opts.method || 'GET',
@@ -825,7 +829,9 @@ function permBanner() {
 }
 // A cached status is reused while the PR's updated_at is unchanged and its CI is final (pending CI can change without updated_at moving).
 const CI_FINAL = new Set(['success', 'failure', 'none']);
-const statusFresh = (i) => { const st = state.status.get(i.id); return !!(st && st.u === i.updated_at && st.pr && CI_FINAL.has(st.ci)); };
+// updated_at does not move on a CI re-run or when the base branch changes (mergeable), so also expire entries after STATUS_TTL_MS.
+const STATUS_TTL_MS = 10 * 60000;
+const statusFresh = (i) => { const st = state.status.get(i.id); return !!(st && st.u === i.updated_at && st.pr && CI_FINAL.has(st.ci) && Date.now() - (st.at || 0) < STATUS_TTL_MS); };
 async function loadPrStatuses() {
   const prs = [...new Map(TABS.filter((t) => t.pr).flatMap((t) => state.data[t.id] || []).map((i) => [i.id, i])).values()].filter((i) => !statusFresh(i));
   const token = state.token;
@@ -834,7 +840,7 @@ async function loadPrStatuses() {
     while (idx < prs.length && state.token === token) {
       if (paused()) { idx = prs.length; break; }
       const i = prs[idx++];
-      try { const st = await prStatus(i); if (state.token !== token) return; st.u = i.updated_at; state.status.set(i.id, st); permBanner(); renderList(); }
+      try { const st = await prStatus(i); if (state.token !== token) return; st.u = i.updated_at; st.at = Date.now(); state.status.set(i.id, st); permBanner(); renderList(); }
       catch (e) {
         if (state.token !== token) return;
         if (e.status === 401 || e.status === 429) { banner(e.message); idx = prs.length; }

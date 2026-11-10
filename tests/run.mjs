@@ -363,8 +363,8 @@ await test('secondary limit: Retry-After seconds pauses everything; manual Refre
   await page.clock.runFor(60000); await page.waitForTimeout(100);
   assert.equal(total(mock), n, 'zero requests while paused');
   assert.equal(await page.locator('#list li').count(), rows, 'data preserved');
-  await page.clock.runFor(61000); await page.waitForTimeout(100);
   mock.faults = [];
+  await page.clock.runFor(61000); await page.waitForTimeout(300); // automatic updates resume by themselves when the pause ends
   await page.locator('#refresh').click(); await page.waitForTimeout(300);
   assert.ok(total(mock) > n, 'resumes at the enforced time (not pushed later by blocked refreshes)');
   await page.waitForFunction(() => !/slow down/.test(document.getElementById('banner').textContent));
@@ -447,6 +447,25 @@ await test('status cache: unchanged PRs are not refetched; changed updated_at or
   const changed = mock.called('GET', '/pulls/\\d+$').map((c) => c.path);
   assert.ok(changed.some((p) => /other\/tools\/pulls\/13/.test(p)), 'changed PR refetched');
   assert.ok(!changed.some((p) => /acme\/api\/pulls\/12/.test(p)), 'unchanged PR still cached');
+});
+await test('status cache: entries expire after 10 minutes (CI re-runs and base-branch changes do not move updated_at)', async ({ page, mock }) => {
+  await page.clock.install(); await page.reload(); await page.locator('#list li').first().waitFor();
+  await tab(page, 2); await settled(page); await page.waitForTimeout(500);
+  mock.calls.length = 0;
+  await page.clock.runFor(6 * 60000); await page.waitForTimeout(800);
+  assert.equal(mock.called('GET', 'other/tools/pulls/13$').length, 0, 'cached within the TTL');
+  await page.clock.runFor(5 * 60000); await page.waitForTimeout(800);
+  assert.ok(mock.called('GET', 'other/tools/pulls/13$').length > 0, 'refetched after the TTL');
+});
+await test('secondary limit: a write waiting for its 1s slot is not sent once a pause has started', async ({ page, mock }) => {
+  await tab(page, 2); await settled(page);
+  await page.locator('#list li input[type=checkbox]:not(:disabled)').first().check();
+  await page.locator('#bulkall').click(); await page.locator('#bulkapprove').click(); await page.locator('#bulkconfirm').click();
+  await until(async () => mock.called('POST', '/reviews').length >= 1, 'first approval');
+  mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': '120' }, 1);
+  await page.evaluate(() => document.getElementById('refresh').click()); await slowBanner(page);
+  const n = total(mock); await page.waitForTimeout(3000);
+  assert.equal(total(mock), n, 'nothing sent after the pause began');
 });
 
 // ---- detail, markdown, XSS, images ----
