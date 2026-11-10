@@ -546,6 +546,7 @@ async function refresh(auto = false) {
   state.lastAttempt = Date.now();
   if (results.some(Boolean)) state.lastUpdated = state.lastAttempt;
   const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
+  dropGoneSelection();
   renderTabs(); renderRepos(); renderList(); renderUpdated();
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
   syncDetail();
@@ -553,6 +554,15 @@ async function refresh(auto = false) {
   if (paused()) return;
   loadPrStatuses();
   loadWaitTimes();
+}
+
+// The open detail panel is never re-rendered by a refresh (scroll, focus, typed text stay as they are). If its item has left the
+// current tab it is closed cleanly, unless there is unsent comment text: then the panel stays so nothing typed is lost.
+function dropGoneSelection() {
+  if (state.selected == null || $('detail').hidden || tabItems(state.tab).some((i) => i.id === state.selected)) return;
+  const ta = $('detail').querySelector('textarea');
+  if (ta && ta.value.trim()) return;
+  closeDetail(); state.selected = null;
 }
 
 // ---- auto refresh ----
@@ -656,8 +666,27 @@ function renderRepos() {
 
 function renderList() {
   const ul = $('list'), detail = $('detail'), y = window.scrollY, x = window.scrollX, dy = detail.scrollTop, ly = ul.scrollTop;
+  const f = listFocus(ul), tipWasOpen = !$('waittip').hidden;
   buildList(ul);
   window.scrollTo(x, y); detail.scrollTop = dy; ul.scrollTop = ly;
+  restoreListFocus(ul, f, tipWasOpen);
+}
+// The list is rebuilt from scratch, so remember what had keyboard focus (item id + part of the row) and put it back afterwards.
+function listFocus(ul) {
+  const a = document.activeElement, li = a && a !== ul && ul.contains(a) ? a.closest('li[data-id]') : null;
+  if (!li) return null;
+  const role = a === li ? 'row' : a.matches('.bulk input') ? 'checkbox' : a.matches('button.wait') ? 'wait' : a.matches('a') ? 'link' : 'row';
+  return { id: li.dataset.id, role, index: [...ul.children].indexOf(li) };
+}
+function restoreListFocus(ul, f, tipWasOpen) {
+  if (!f || (document.activeElement && document.activeElement !== document.body && document.activeElement.isConnected)) return;
+  const rows = [...ul.querySelectorAll('li[data-id]')];
+  let li = rows.find((r) => r.dataset.id === f.id), role = f.role;
+  if (!li) { li = rows[Math.min(f.index, rows.length - 1)]; role = 'row'; } // the item is gone: land on the row now in its place
+  if (!li) return;
+  const part = { checkbox: '.bulk input:not(:disabled)', wait: 'button.wait', link: 'a' }[role];
+  (part && li.querySelector(part) || li).focus({ preventScroll: true });
+  if (!tipWasOpen || role !== 'wait') hideWaitTip();
 }
 function visibleItems() {
   const q = $('textfilter').value.toLowerCase(), repo = $('repofilter').value;
@@ -754,7 +783,7 @@ function buildList(ul) {
     const bulk = i.pull_request ? h('label', { class: 'bulk', title: reason || 'Select for bulk approve', onclick: (e) => e.stopPropagation() },
       h('input', { type: 'checkbox', 'aria-label': reason ? `${where} cannot be selected. ${reason}` : `Select ${where} for bulk approve`, disabled: !!reason, checked: !reason && state.sel.has(i.id),
         onchange: (e) => toggleSel(i, e.target.checked) })) : null;
-    put(ul, h('li', { class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') select(i); } },
+    put(ul, h('li', { 'data-id': String(i.id), class: [state.selected === i.id ? 'sel' : '', state.cursor === i.id ? 'cur' : ''].join(' ').trim(), tabindex: '0', onclick: () => select(i), onkeydown: (e) => { if (e.key === 'Enter' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') select(i); } },
       h('div', { class: 'row-title' }, bulk, i.title),
       h('div', { class: 'meta' },
         h('span', {}, `${repoOf(i)}#${i.number}`),
