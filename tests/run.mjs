@@ -1,10 +1,10 @@
 // Mocked-API end-to-end checks. Usage: node tests/run.mjs [name-filter]
 import assert from 'node:assert/strict';
-import { loadPlaywright, serve, open, settled } from './lib.mjs';
+import { loadPlaywright, launchBrowser, serve, open, settled } from './lib.mjs';
 
-const { chromium } = loadPlaywright();
+const pw = loadPlaywright();
 const { srv, url } = await serve();
-const browser = await chromium.launch();
+const browser = await launchBrowser(pw);
 const only = process.argv[2];
 const results = [];
 async function test(name, fn, opts) {
@@ -727,7 +727,7 @@ await test('shortcuts: "r" refreshes', async ({ page, mock }) => {
   await page.waitForFunction(() => !document.getElementById('refresh').disabled);
   assert.ok(mock.called('GET', '/search/issues').length > base);
 });
-await test('CSP: policy present; inline script, foreign fetch and foreign image are blocked', async ({ page, csp }) => {
+await test('CSP: policy present; inline script, foreign fetch and foreign image are blocked', async ({ page }) => {
   const policy = await page.locator('meta[http-equiv=Content-Security-Policy]').getAttribute('content');
   for (const d of ["connect-src https://api.github.com", "script-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'none'"]) assert.ok(policy.includes(d), d);
   assert.ok(!/unsafe-inline|unsafe-eval/.test(policy));
@@ -738,6 +738,7 @@ await test('CSP: policy present; inline script, foreign fetch and foreign image 
     return { inline: window.__inline, f, img };
   });
   assert.deepEqual(r, { inline: 0, f: 'blocked', img: 'blocked' });
+  const csp = await page.evaluate(() => window.__csp);
   assert.ok(csp.length >= 3, 'CSP violations reported: ' + csp.length);
 });
 await test('token check (signed in): all permissions ok, read-only calls, no token leak', async ({ page, mock }) => {

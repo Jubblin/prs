@@ -17,8 +17,16 @@ concurrency:
 
 jobs:
   mocked-tests:
+    name: mocked-tests (${{ matrix.browser }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # PR and push runs stay chromium-only; nightly and manual runs add firefox.
+        browser: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["chromium","firefox"]' || '["chromium"]') }}
+    env:
+      BROWSER: ${{ matrix.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -28,10 +36,11 @@ jobs:
         working-directory: tests
         run: |
           npm install --no-save --no-package-lock playwright
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps ${{ matrix.browser }}
       - name: Mocked-API end-to-end checks
         run: node tests/run.mjs
       - name: create-pat.sh checks
+        if: ${{ matrix.browser == 'chromium' }}
         run: bash tests/create-pat.test.sh
 
   report-failure:

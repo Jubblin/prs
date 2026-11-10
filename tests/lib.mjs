@@ -10,6 +10,12 @@ const require = createRequire(import.meta.url);
 export function loadPlaywright() {
   try { return require('playwright'); } catch { console.error('Playwright not found. See "Running the mocked-API tests" in docs/TESTING.md'); process.exit(2); }
 }
+// Browser under test: BROWSER=chromium (default) | firefox | webkit.
+export function launchBrowser(pw) {
+  const name = process.env.BROWSER || 'chromium';
+  if (!['chromium', 'firefox', 'webkit'].includes(name)) { console.error(`Unknown BROWSER "${name}" (use chromium or firefox)`); process.exit(2); }
+  return pw[name].launch();
+}
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 export function serve() {
   const srv = http.createServer((req, res) => {
@@ -21,22 +27,23 @@ export function serve() {
   return new Promise((ok) => srv.listen(0, '127.0.0.1', () => ok({ srv, url: `http://127.0.0.1:${srv.address().port}/` })));
 }
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-// token=null -> signed-out page. Returns { page, mock, errors, hosts, csp }.
+// token=null -> signed-out page. Returns { page, mock, errors, hosts }.
 export async function open(browser, url, { token = 'tok', mock = createMock(), viewport = { width: 1280, height: 800 }, colorScheme = 'light', storage = {} } = {}) {
   const context = await browser.newContext({ viewport, colorScheme });
   const page = await context.newPage();
-  const errors = [], hosts = new Set(), csp = [];
+  const errors = [], hosts = new Set();
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) csp.push(m.text()); });
   page.on('dialog', (d) => d.dismiss());
   await page.route('https://api.github.com/**', (r) => mock.handle(r));
   await page.route(/^https:\/\/(?!api\.github\.com)[^/]*(github\.com|githubusercontent\.com|githubassets\.com)\//, (r) => { hosts.add(new URL(r.request().url()).hostname); return r.fulfill({ status: 200, contentType: 'image/png', body: PNG }); });
   page.on('request', (r) => { const u = new URL(r.url()); if (u.hostname !== '127.0.0.1') hosts.add(u.hostname); });
   await page.route(/evil\.example/, (r) => r.abort());
+  // securitypolicyviolation events work in every browser; console-message wording does not (Firefox differs).
+  await page.addInitScript(() => { window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI)); });
   const init = { ...(token ? { gh_dashboard_token: token } : {}), ...storage };
   await page.addInitScript((s) => { if (!sessionStorage.__init) { sessionStorage.__init = 1; for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } }, init);
   await page.goto(url);
-  return { page, mock, errors, hosts, csp, context };
+  return { page, mock, errors, hosts, context };
 }
 // Wait until every PR row has a final CI status (no "…").
 export const settled = (page) => page.waitForFunction(() => document.querySelectorAll('#list li').length > 0 && ![...document.querySelectorAll('#list .meta span')].some((s) => s.textContent === 'CI: …' || s.textContent === 'Review: …'), null, { timeout: 15000 });
