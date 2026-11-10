@@ -5,7 +5,8 @@ All notable changes to this project, grouped by pull request. Format based on [K
 ## Unreleased
 
 ### Fixed
-- GitHub secondary rate limits (403/429 with `Retry-After`) are recognised: the app shows a pause banner, suspends automatic refresh, bulk approve and background lookups until the delay passes, spaces write requests at least 1s apart, and uses 2 instead of 4 concurrent lookups to reduce request bursts
+- GitHub secondary rate limits (403/429 with `Retry-After`, or a "secondary rate limit" message) are recognised. One pause gate in the request layer stops all requests (auto refresh, status and wait-time lookups, bulk approve, manual Refresh) until the resume time, shown as "GitHub is asking us to slow down; automatic updates resume at HH:MM". `Retry-After` may be seconds or an HTTP date and is capped at 5 minutes; without it the wait escalates 60s, 120s, 240s, 300s and resets after a successful request. Blocked requests never extend the pause
+- Fewer requests: PR statuses are cached per `updated_at` (CI that is still pending is refetched), so a refresh with nothing changed no longer refetches every PR (70-PR dashboard: 314 requests down to 10); background lookups run 2 at a time with a short gap, and write requests are at least 1s apart
 
 ### Added
 - CI workflow (`.github/workflows/tests.yml`) running the mocked end-to-end checks and the `create-pat.sh` checks on every pull request and on push to `main`
