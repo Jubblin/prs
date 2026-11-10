@@ -23,7 +23,7 @@ const TABS = [
 ];
 const SEARCH_TABS = TABS.filter((t) => !t.virtual);
 
-const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), waitDays: loadWait(), waitCache: loadWaitCache(), waitFail: new Set(), waitPending: new Set(), waitRun: 0, waitRerun: false, lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, busy: 0, refreshing: false, timer: null };
+const state = { repo: localStorage.getItem(REPO_KEY) || '', token: null, tab: TABS.some((t) => t.id === localStorage.getItem(TAB_KEY)) ? localStorage.getItem(TAB_KEY) : TABS[0].id, data: {}, selected: null, cursor: null, sel: new Set(), status: new Map(), autoMin: loadAuto(), waitDays: loadWait(), waitCache: loadWaitCache(), waitFail: new Set(), waitPending: new Set(), waitRun: 0, waitRerun: false, lastUpdated: 0, lastAttempt: 0, rateLimitUntil: 0, pauseMsg: '', pauseTimer: null, secStreak: 0, busy: 0, refreshing: false, timer: null };
 function loadAuto() {
   const v = localStorage.getItem(AUTO_KEY);
   return v !== null && AUTO_CHOICES.includes(Number(v)) ? Number(v) : 5;
@@ -69,8 +69,11 @@ function safeUrl(u) {
   try { const x = new URL(u); return x.protocol === 'https:' && x.hostname === 'github.com' ? x.href : null; } catch { return null; }
 }
 
+// One pause gate for every request: while now < state.rateLimitUntil, gh() sends nothing.
+const paused = () => Date.now() < state.rateLimitUntil;
 function banner(msg, info = false) {
   const b = $('banner');
+  if (paused() && state.pauseMsg && msg && msg !== state.pauseMsg) { msg = state.pauseMsg; info = false; } // unrelated errors must not hide the pause notice
   b.textContent = msg || '';
   b.hidden = !msg;
   b.className = info ? 'info' : '';
@@ -80,7 +83,40 @@ class ApiError extends Error {
   constructor(msg, status) { super(msg); this.status = status; }
 }
 
+// Space out write requests: GitHub's secondary limits penalise bursts of content-creating calls.
+let lastWrite = 0;
+const WRITE_GAP_MS = 1000;
+const SEC_BASE_S = 60, SEC_MAX_S = 300, BG_GAP_MS = 150;
+// Retry-After is delay-seconds or an HTTP-date; anything else (garbage, negative, zero, past) yields null.
+function parseRetryAfter(v, now = Date.now()) {
+  if (v == null) return null;
+  v = String(v).trim();
+  if (/^\d+$/.test(v)) { const n = Number(v); return n > 0 ? n : null; }
+  if (!/[a-z]/i.test(v)) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) && t > now ? Math.ceil((t - now) / 1000) : null;
+}
+// Starts (never extends) a pause and shows the banner; the banner clears itself when the pause ends.
+function startPause(until, msg) {
+  state.rateLimitUntil = until; state.pauseMsg = msg;
+  clearTimeout(state.pauseTimer);
+  state.pauseTimer = setTimeout(() => {
+    state.pauseTimer = null;
+    if (!paused()) {
+      if ($('banner').textContent === state.pauseMsg) banner(''); state.pauseMsg = '';
+      if (state.token && state.autoMin && !autoBlocked() && document.visibilityState === 'visible') refresh(true); // automatic updates resume now; a refresh also finishes the statuses and wait times the pause interrupted
+    }
+  }, Math.max(until - Date.now(), 0) + 50);
+  banner(msg);
+}
 async function gh(path, opts = {}) {
+  if (paused()) throw new ApiError(state.pauseMsg || 'Rate limit active until ' + fmtTime(state.rateLimitUntil) + '.', 429);
+  if (opts.method && opts.method !== 'GET') {
+    const slot = Math.max(Date.now(), lastWrite + WRITE_GAP_MS);
+    lastWrite = slot;
+    if (slot > Date.now()) await new Promise((r) => setTimeout(r, slot - Date.now()));
+    if (paused()) throw new ApiError(state.pauseMsg || 'Rate limit active until ' + fmtTime(state.rateLimitUntil) + '.', 429); // a pause may have started while this write waited its turn
+  }
   const res = await fetch(API + path, {
     method: opts.method || 'GET',
     headers: {
@@ -91,7 +127,7 @@ async function gh(path, opts = {}) {
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
-  if (res.ok) return res.status === 204 ? null : res.json();
+  if (res.ok) { state.secStreak = 0; return res.status === 204 ? null : res.json(); }
   let msg = '';
   try {
     const j = await res.json();
@@ -108,8 +144,21 @@ async function gh(path, opts = {}) {
   }
   if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
-    state.rateLimitUntil = reset || Date.now() + 60000;
-    throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.', 429);
+    const emsg = 'Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.';
+    if (!paused()) startPause(reset || Date.now() + 60000, emsg);
+    throw new ApiError(state.pauseMsg || emsg, 429);
+  }
+  // Secondary rate limit: 403/429 with Retry-After or a secondary-limit message (a plain permission 403 has neither).
+  const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
+  if ((res.status === 403 || res.status === 429) && (retryAfter || res.headers.has('retry-after') || /secondary rate limit|abuse detection/i.test(msg))) {
+    if (!paused()) { // a response to a request sent before the pause began must not extend or escalate it
+      let secs;
+      if (retryAfter) secs = Math.min(retryAfter, SEC_MAX_S);
+      else { secs = Math.min(SEC_BASE_S * 2 ** state.secStreak, SEC_MAX_S); state.secStreak++; }
+      const until = Date.now() + secs * 1000;
+      startPause(until, 'GitHub is asking us to slow down; automatic updates resume at ' + fmtTime(until));
+    }
+    throw new ApiError(state.pauseMsg, 429);
   }
   throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`, res.status);
 }
@@ -435,7 +484,7 @@ $('checktoken').addEventListener('click', () => runTokenCheck(state.token));
 // ---- auth ----
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
-  state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); state.waitCache.clear(); state.waitFail.clear(); state.waitPending.clear(); state.waitRun++; localStorage.removeItem(WAIT_CACHE_KEY); $('waitbanner').hidden = true; closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0;
+  state.token = null; state.me = null; state.data = {}; state.selected = null; state.sel.clear(); renderToolbar(); state.status.clear(); state.waitCache.clear(); state.waitFail.clear(); state.waitPending.clear(); state.waitRun++; localStorage.removeItem(WAIT_CACHE_KEY); $('waitbanner').hidden = true; closeDetail(); clear($('list')); state.lastUpdated = 0; state.lastAttempt = 0; state.rateLimitUntil = 0; state.pauseMsg = ''; state.secStreak = 0; clearTimeout(state.pauseTimer); state.pauseTimer = null;
   renderUpdated(); showView(); scheduleAuto();
   $('tokencheck').hidden = true;
 }
@@ -483,6 +532,7 @@ async function loadTab(tab) {
 async function refresh(auto = false) {
   if (!state.token) return;
   if (auto === true && state.refreshing) return;
+  if (paused()) { if (auto !== true) banner(state.pauseMsg); return; } // nothing is sent while paused
   if (auto !== true) { banner(''); permBanner(); }
   state.refreshing = true;
   $('refresh').disabled = true;
@@ -499,6 +549,7 @@ async function refresh(auto = false) {
   renderTabs(); renderRepos(); renderList(); renderUpdated();
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
   scheduleAuto();
+  if (paused()) return;
   loadPrStatuses();
   loadWaitTimes();
 }
@@ -776,20 +827,29 @@ function permBanner() {
   b.hidden = !miss.size;
   b.textContent = miss.size ? 'Some status info is hidden because the token is missing permissions: add ' + [...miss].join(', ') + ' (Repository permissions) to the token.' : '';
 }
+// A cached status is reused while the PR's updated_at is unchanged and its CI is final (pending CI can change without updated_at moving).
+const CI_FINAL = new Set(['success', 'failure', 'none']);
+// updated_at does not move on a CI re-run or when the base branch changes (mergeable), so also expire entries after STATUS_TTL_MS.
+const STATUS_TTL_MS = 10 * 60000;
+const statusFresh = (i) => { const st = state.status.get(i.id); return !!(st && st.u === i.updated_at && st.pr && CI_FINAL.has(st.ci) && Date.now() - (st.at || 0) < STATUS_TTL_MS); };
 async function loadPrStatuses() {
-  const prs = [...new Map(TABS.filter((t) => t.pr).flatMap((t) => state.data[t.id] || []).map((i) => [i.id, i])).values()];
+  const prs = [...new Map(TABS.filter((t) => t.pr).flatMap((t) => state.data[t.id] || []).map((i) => [i.id, i])).values()].filter((i) => !statusFresh(i));
+  const token = state.token;
   let idx = 0;
   async function worker() {
-    while (idx < prs.length) {
+    while (idx < prs.length && state.token === token) {
+      if (paused()) { idx = prs.length; break; }
       const i = prs[idx++];
-      try { state.status.set(i.id, await prStatus(i)); permBanner(); renderList(); }
+      try { const st = await prStatus(i); if (state.token !== token) return; st.u = i.updated_at; st.at = Date.now(); state.status.set(i.id, st); permBanner(); renderList(); }
       catch (e) {
+        if (state.token !== token) return;
         if (e.status === 401 || e.status === 429) { banner(e.message); idx = prs.length; }
         else state.status.set(i.id, { ci: 'error', ciTip: e.message, missing: [], review: 'unknown', pr: null, checks: { check_runs: [] }, combined: null, reviews: [] });
       }
+      if (idx < prs.length) await sleep(BG_GAP_MS);
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
   renderList();
 }
 
@@ -859,6 +919,9 @@ async function loadWaitTimes() {
     while (idx < todo.length && !stale()) {
       if (state.busy > 0 || Date.now() < state.rateLimitUntil) { if (Date.now() < state.rateLimitUntil) limited = limited || 'rate limit'; break; }
       const { i, p } = todo[idx++];
+      if (idx > 1) await sleep(BG_GAP_MS);
+      if (stale()) return;
+      if (paused()) { limited = limited || 'rate limit'; break; }
       try {
         const r = waitFromEvents(await fetchEvents(i), state.me, p);
         if (stale()) return;
@@ -873,7 +936,7 @@ async function loadWaitTimes() {
       updateWaitCount(); if (state.tab === 'waiting') renderList();
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
   if (state.token !== token) return;
   if (state.waitRun === run) {
     for (const { i } of todo) state.waitPending.delete(i.id);

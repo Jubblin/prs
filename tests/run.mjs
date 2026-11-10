@@ -168,6 +168,7 @@ await test('waiting tab: exact date per source as tooltip, keyboard focus, scree
   const by = (n) => mock.items.find((x) => x.number === n);
   await page.locator('#refresh').click(); await settled(page);
   await until(async () => (await page.locator('#list .wait-check:not(.done)').count()) === 0, 'checks to finish');
+  await page.waitForTimeout(500); // let the final status/wait re-render land before focusing
   const DATE = '\\w{3} \\d{1,2} \\w{3} \\d{4}, \\d\\d:\\d\\d \\(\\S+\\)';
   const info = (title) => row(page, title).locator('button.wait').evaluate((b) => ({ title: b.title, desc: document.getElementById(b.getAttribute('aria-describedby')).textContent, iso: document.getElementById(b.getAttribute('aria-describedby')).querySelector('time').getAttribute('datetime') }));
   const cases = [['Draft: refactor router', 'Review requested', evAt(9)], ['Bump deps', 'Requested via team core', evAt(12)], ['Assigned issue', 'Assigned', evAt(9)], ['Add dark mode', 'Assigned', evAt(7.5)]];
@@ -249,7 +250,7 @@ await test('waiting tab: events failure falls back to opened date with one banne
 await test('waiting tab: rate limit on events degrades gracefully', async ({ page, mock }) => {
   timeline(mock);
   mock.fail('GET', '/events', 403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) });
-  await page.locator('#refresh').click(); await settled(page);
+  await page.locator('#refresh').click(); /* the pause is global, so statuses may legitimately stay unloaded */
   await until(async () => await page.locator('#waitbanner').isVisible(), 'banner');
   assert.match(await txt(page, '#waitbanner'), /Rate limit/i);
   assert.ok(await page.locator('#list li').count() > 0);
@@ -335,6 +336,136 @@ await test('rate limit (403 + remaining 0) shows reset banner', async ({ page, m
   mock.fail('GET', '/search/issues', 403, { message: 'rate limit' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) });
   await page.locator('#refresh').click();
   await page.waitForFunction(() => /Rate limit exceeded/.test(document.getElementById('banner').textContent));
+});
+
+// ---- secondary rate limit: one pause gate, escalation, cache ----
+const SEC = { message: 'You have exceeded a secondary rate limit. Please wait a few minutes before you try again.' };
+const total = (mock) => mock.calls.length;
+const slowBanner = (page) => page.waitForFunction(() => /slow down; automatic updates resume at \d\d:\d\d/.test(document.getElementById('banner').textContent));
+const clockPage = async (page, mock) => { await page.clock.install(); await page.reload(); await page.locator('#list li').first().waitFor(); await settled(page).catch(() => {}); mock.calls.length = 0; };
+// Expects: no request is sent for `blockFor` seconds (manual refresh included), and requests flow again after `openAfter` seconds.
+const expectPause = async (page, mock, blockFor, openAfter) => {
+  await page.clock.runFor((blockFor - 2) * 1000);
+  const n = total(mock); await page.locator('#refresh').click(); await page.waitForTimeout(150);
+  assert.equal(total(mock), n, `no requests while paused (${blockFor}s)`);
+  assert.match(await txt(page, '#banner'), /slow down; automatic updates resume at/);
+  await page.clock.runFor((openAfter - blockFor + 4) * 1000);
+  await page.locator('#refresh').click(); await page.waitForTimeout(250);
+  assert.ok(total(mock) > n, `requests flow again after ${openAfter}s`);
+};
+await test('secondary limit: Retry-After seconds pauses everything; manual Refresh sends nothing and does not extend', async ({ page, mock }) => {
+  await clockPage(page, mock);
+  const rows = await page.locator('#list li').count();
+  mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': '120' });
+  await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(400);
+  const n = total(mock);
+  for (let k = 0; k < 3; k++) { await page.locator('#refresh').click(); await page.waitForTimeout(100); }
+  await page.clock.runFor(60000); await page.waitForTimeout(100);
+  assert.equal(total(mock), n, 'zero requests while paused');
+  assert.equal(await page.locator('#list li').count(), rows, 'data preserved');
+  mock.faults = [];
+  await page.clock.runFor(61000); await page.waitForTimeout(300); // automatic updates resume by themselves when the pause ends
+  await page.locator('#refresh').click(); await page.waitForTimeout(300);
+  assert.ok(total(mock) > n, 'resumes at the enforced time (not pushed later by blocked refreshes)');
+  await page.waitForFunction(() => !/slow down/.test(document.getElementById('banner').textContent));
+  assert.equal(await page.locator('#list li').count(), rows);
+});
+await test('secondary limit: status workers stop cleanly (no further requests) and bulk sends nothing', async ({ page, mock }) => {
+  await clockPage(page, mock);
+  await tab(page, 2); await settled(page);
+  mock.fail('GET', '/pulls/\\d+$', 403, SEC, { 'retry-after': '120' });
+  for (const i of mock.items) if (i.pull_request) i.updated_at = new Date().toISOString();
+  mock.calls.length = 0;
+  await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(600);
+  const n = total(mock); assert.ok(mock.called('GET', '/pulls/\\d+$').length <= 3, 'only in-flight requests were sent');
+  await row(page, 'Bump deps').locator('input').check();
+  await page.locator('#bulkapprove').click(); await page.locator('#bulkconfirm').click(); await page.locator('#bulksummary').waitFor();
+  await page.clock.runFor(30000); await page.waitForTimeout(300);
+  assert.equal(total(mock), n, 'no requests from workers, bulk or timers while paused');
+  assert.equal(mock.called('POST', '/reviews').length, 0);
+});
+await test('secondary limit: message-only 403 escalates 60 -> 120 -> 240 -> 300 (cap)', async ({ page, mock }) => {
+  await clockPage(page, mock);
+  mock.fail('GET', '/search/issues', 403, SEC);
+  await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(200);
+  await expectPause(page, mock, 60, 60); await slowBanner(page); await page.waitForTimeout(200);
+  await expectPause(page, mock, 120, 120); await slowBanner(page); await page.waitForTimeout(200);
+  await expectPause(page, mock, 240, 240); await slowBanner(page); await page.waitForTimeout(200);
+  await expectPause(page, mock, 300, 300);
+});
+await test('secondary limit: Retry-After 99999 is capped at 5 minutes', async ({ page, mock }) => {
+  await clockPage(page, mock);
+  mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': '99999' });
+  await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(200);
+  await expectPause(page, mock, 300, 300);
+});
+await test('secondary limit: Retry-After as HTTP-date is honoured; garbage and negative fall back to 60s', async ({ page, mock }) => {
+  await clockPage(page, mock);
+  mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': new Date(Date.now() + 100000).toUTCString() });
+  await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(200);
+  await expectPause(page, mock, 98, 100);
+});
+for (const bad of ['soon', '-5']) {
+  await test(`secondary limit: Retry-After "${bad}" is ignored (60s default)`, async ({ page, mock }) => {
+    await clockPage(page, mock);
+    mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': bad });
+    await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(200);
+    await expectPause(page, mock, 60, 60);
+  });
+}
+await test('secondary limit: a permission 403 is not a secondary limit and does not pause', async ({ page, mock }) => {
+  mock.fail('GET', '/search/issues', 403, { message: 'Resource not accessible by personal access token' });
+  await page.locator('#refresh').click();
+  await page.waitForFunction(() => /403/.test(document.getElementById('banner').textContent));
+  assert.doesNotMatch(await txt(page, '#banner'), /slow down/);
+  const n = total(mock); await page.locator('#refresh').click(); await page.waitForTimeout(300);
+  assert.ok(total(mock) > n, 'next refresh still sends requests');
+});
+await test('secondary limit: unrelated errors do not replace the pause banner; recovery clears it', async ({ page, mock }) => {
+  await clockPage(page, mock);
+  mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': '60' });
+  await page.locator('#refresh').click(); await slowBanner(page); await page.waitForTimeout(300);
+  const msg = await txt(page, '#banner');
+  await page.evaluate(() => { document.getElementById('refresh').click(); });
+  await page.waitForTimeout(100);
+  assert.equal(await txt(page, '#banner'), msg);
+  mock.faults = [];
+  await page.clock.runFor(62000);
+  await page.waitForFunction(() => !/slow down/.test(document.getElementById('banner').textContent) || document.getElementById('banner').hidden);
+});
+await test('status cache: unchanged PRs are not refetched; changed updated_at or pending CI are', async ({ page, mock }) => {
+  await tab(page, 2); await settled(page); await page.waitForTimeout(500);
+  const first = mock.called('GET', '/pulls/\\d+$').length; assert.ok(first > 0);
+  mock.calls.length = 0;
+  await page.locator('#refresh').click(); await page.waitForTimeout(1500);
+  const pending = mock.items.filter((i) => i.pull_request && i.ci === 'pending').length;
+  const again = mock.called('GET', '/pulls/\\d+$').filter((c) => !/^\/repos\/acme\/web\/pulls\/11/.test(c.path));
+  assert.equal(again.length, 0, 'unchanged PRs not refetched on second refresh (pending CI excepted: ' + pending + ')');
+  mock.items.find((i) => i.number === 13).updated_at = new Date().toISOString();
+  mock.calls.length = 0;
+  await page.locator('#refresh').click(); await page.waitForTimeout(1500);
+  const changed = mock.called('GET', '/pulls/\\d+$').map((c) => c.path);
+  assert.ok(changed.some((p) => /other\/tools\/pulls\/13/.test(p)), 'changed PR refetched');
+  assert.ok(!changed.some((p) => /acme\/api\/pulls\/12/.test(p)), 'unchanged PR still cached');
+});
+await test('status cache: entries expire after 10 minutes (CI re-runs and base-branch changes do not move updated_at)', async ({ page, mock }) => {
+  await page.clock.install(); await page.reload(); await page.locator('#list li').first().waitFor();
+  await tab(page, 2); await settled(page); await page.waitForTimeout(500);
+  mock.calls.length = 0;
+  await page.clock.runFor(6 * 60000); await page.waitForTimeout(800);
+  assert.equal(mock.called('GET', 'other/tools/pulls/13$').length, 0, 'cached within the TTL');
+  await page.clock.runFor(5 * 60000); await page.waitForTimeout(800);
+  assert.ok(mock.called('GET', 'other/tools/pulls/13$').length > 0, 'refetched after the TTL');
+});
+await test('secondary limit: a write waiting for its 1s slot is not sent once a pause has started', async ({ page, mock }) => {
+  await tab(page, 2); await settled(page);
+  await page.locator('#list li input[type=checkbox]:not(:disabled)').first().check();
+  await page.locator('#bulkall').click(); await page.locator('#bulkapprove').click(); await page.locator('#bulkconfirm').click();
+  await until(async () => mock.called('POST', '/reviews').length >= 1, 'first approval');
+  mock.fail('GET', '/search/issues', 403, SEC, { 'retry-after': '120' }, 1);
+  await page.evaluate(() => document.getElementById('refresh').click()); await slowBanner(page);
+  const n = total(mock); await page.waitForTimeout(3000);
+  assert.equal(total(mock), n, 'nothing sent after the pause began');
 });
 
 // ---- detail, markdown, XSS, images ----
@@ -465,6 +596,7 @@ await test('actions: close then reopen an issue flips label and state', async ({
   assert.equal(mock.called('PATCH', '/issues/20')[0].body.state, 'closed');
   await page.getByRole('button', { name: 'Reopen' }).click();
   await page.getByRole('button', { name: 'Close' }).last().waitFor();
+  for (let n = 0; n < 40 && mock.called('PATCH', '/issues/20').length < 2; n++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(mock.called('PATCH', '/issues/20')[1].body.state, 'open');
 });
 await test('detail: load failure (404) shows banner and closes panel', async ({ page, mock }) => {
