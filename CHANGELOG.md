@@ -9,6 +9,7 @@ All notable changes to this project, grouped by pull request. Format based on [K
 - Fewer requests: PR statuses are cached per `updated_at` (CI that is still pending is refetched), so a refresh with nothing changed no longer refetches every PR (70-PR dashboard: 314 requests down to 10); background lookups run 2 at a time with a short gap, and write requests are at least 1s apart (a write waiting for its slot is dropped if a pause begins meanwhile); cached statuses also expire after 10 minutes because CI re-runs and base-branch changes do not move `updated_at`; with automatic refresh on, one refresh runs when the pause ends so interrupted statuses and wait times are completed
 
 ### Added
+- Tests can run in Firefox: `BROWSER=firefox node tests/run.mjs` (default `chromium`); nightly and manual CI runs use a Chromium + Firefox matrix, pull request and push runs stay Chromium-only, and a failed nightly still produces a single issue
 - CI workflow (`.github/workflows/tests.yml`) running the mocked end-to-end checks and the `create-pat.sh` checks on every pull request and on push to `main`
 - The tests also run nightly (03:17 UTC, default branch) and on demand; a failed nightly run opens a `Nightly tests failed` issue, or comments on the open one. GitHub disables schedules after 60 days of repository inactivity
 - "Waiting on me" tab: review-requested and assigned items open longer than 3/7/14/30 days (default 7), oldest first, with "waiting N days" on each row; shortcut `6`

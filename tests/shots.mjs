@@ -1,12 +1,12 @@
 // Regenerates docs/img/*.png against the mock API. Usage: node tests/shots.mjs
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPlaywright, serve, open, settled } from './lib.mjs';
+import { loadPlaywright, launchBrowser, serve, open, settled } from './lib.mjs';
 
 const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../docs/img');
-const { chromium } = loadPlaywright();
+const pw = loadPlaywright();
 const { srv, url } = await serve();
-const browser = await chromium.launch();
+const browser = await launchBrowser(pw);
 const shot = (page, name, opts = {}) => page.screenshot({ path: path.join(out, name + '.png'), ...opts });
 const review = async (page) => { await page.locator('#tabs button').nth(1).click(); await settled(page); };
 

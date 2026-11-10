@@ -1,10 +1,10 @@
 // Mocked-API end-to-end checks. Usage: node tests/run.mjs [name-filter]
 import assert from 'node:assert/strict';
-import { loadPlaywright, serve, open, settled } from './lib.mjs';
+import { loadPlaywright, launchBrowser, serve, open, settled } from './lib.mjs';
 
-const { chromium } = loadPlaywright();
+const pw = loadPlaywright();
 const { srv, url } = await serve();
-const browser = await chromium.launch();
+const browser = await launchBrowser(pw);
 const only = process.argv[2];
 const results = [];
 async function test(name, fn, opts) {

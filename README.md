@@ -152,11 +152,12 @@ Automated end-to-end checks run against an in-memory fake of the GitHub API (dev
 ```sh
 cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
 node tests/run.mjs        # 68 checks, exit code 1 on failure
+BROWSER=firefox node tests/run.mjs   # same checks in Firefox (npx playwright install firefox first)
 bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.sh
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 
-These checks run in CI on every pull request and on push to `main` (`.github/workflows/tests.yml`) and nightly; a failed nightly run opens (or updates) a `Nightly tests failed` issue, and GitHub pauses schedules after 60 days of repository inactivity. They use mocked responses only; behaviour on real GitHub still needs the manual smoke test.
+These checks run in CI on every pull request and on push to `main` (`.github/workflows/tests.yml`, Chromium) and nightly and on demand (Chromium and Firefox); a failed nightly run opens (or updates) a `Nightly tests failed` issue, and GitHub pauses schedules after 60 days of repository inactivity. They use mocked responses only; behaviour on real GitHub still needs the manual smoke test.
 
 ## Screenshots
 
