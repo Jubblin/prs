@@ -498,6 +498,164 @@ await test('detail sync: unchanged item is not refetched on refresh', async ({ p
   await page.locator('#refresh').click(); await settled(page).catch(() => {});
   assert.equal(mock.called('GET', '/issues/10$').length, 0);
 });
+// ---- detail sync: verification additions ----
+const D = '#detail';
+const touch = (it, f = {}) => Object.assign(it, f, { updated_at: new Date(Date.now() + 1000 * ++touch.n).toISOString() }); touch.n = 0;
+const nGet = (mock, re) => mock.called('GET', re).length;
+await test('detail sync: indicator shown, body edit applied, scrollTop and caret preserved, exactly one reload cycle', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  assert.equal(await page.locator('.synced').count(), 0);
+  const ta = page.locator(D + ' textarea'); await ta.fill('hello world'); await ta.focus();
+  await page.evaluate(() => { const t = document.querySelector('#detail textarea'); t.setSelectionRange(3, 7); });
+  const maxTop = await page.evaluate(() => { const d = document.getElementById('detail'); d.scrollTop = 40; return d.scrollHeight - d.clientHeight; });
+  mock.calls.length = 0;
+  touch(it, { body: 'Edited **body** text' });
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await txt(page, D)).includes('Edited body text'), 'body edit');
+  assert.equal(await page.locator('.synced').count(), 1);
+  assert.match(await txt(page, '.synced'), /Updated on GitHub/);
+  assert.equal(await ta.inputValue(), 'hello world');
+  assert.deepEqual(await page.evaluate(() => { const t = document.querySelector('#detail textarea'); return [document.activeElement === t, t.selectionStart, t.selectionEnd]; }), [true, 3, 7]);
+  if (maxTop >= 40) assert.equal(await page.evaluate(() => document.getElementById('detail').scrollTop), 40);
+  await settled(page).catch(() => {}); await page.waitForTimeout(300);
+  assert.equal(nGet(mock, '/issues/10$'), 1); assert.equal(nGet(mock, '/issues/10/comments'), 1); assert.equal(nGet(mock, '/pulls/10/files'), 1);
+  await page.evaluate(() => document.getElementById('refresh').click()); await page.waitForTimeout(500);
+  assert.equal(nGet(mock, '/issues/10$'), 1, 'unchanged item: no further reload');
+}, { viewport: { width: 1280, height: 420 } });
+await test('detail sync: indicator only appears on in-place updates, not on a normal open', async ({ page }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  assert.equal(await page.locator('.synced').count(), 0);
+});
+await test('detail sync: CI turning green (updated_at unchanged) updates the open panel without a detail reload', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Draft: refactor router');
+  assert.match(await txt(page, D), /build: in_progress/);
+  const it = mock.items.find((x) => x.number === 11); it.ci = 'success';
+  const ta = page.locator(D + ' textarea'); await ta.fill('wip'); await ta.focus();
+  mock.calls.length = 0;
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await txt(page, D)).includes('build: success'), 'CI update');
+  assert.equal(await page.locator('.synced').count(), 1);
+  assert.equal(await ta.inputValue(), 'wip');
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('#detail textarea')), true);
+  assert.equal(nGet(mock, '/issues/11$'), 0, 'no body/comments reload for a CI-only change');
+  assert.equal(nGet(mock, '/issues/11/comments'), 0);
+});
+await test('detail sync: PR closed/merged by someone else keeps the panel with unsent text and gates the actions', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Bump deps');
+  const it = mock.items.find((x) => x.number === 13);
+  await page.locator(D + ' textarea').fill('still typing');
+  touch(it, { state: 'closed' }); it.pull_request = { merged_at: new Date().toISOString() }; // merged: no longer in any open list
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await page.locator(D + ' button', { hasText: 'Approve' }).first().isDisabled()), 'actions gated');
+  assert.equal(await page.locator(D).isVisible(), true);
+  assert.equal(await page.locator(D + ' textarea').inputValue(), 'still typing');
+  assert.equal(await page.locator(D + ' button', { hasText: 'Request changes' }).isDisabled(), true);
+  assert.equal(await page.locator(D + ' button', { hasText: 'Reopen' }).isDisabled(), true);
+  assert.match(await txt(page, D), /merged/);
+  const n = nGet(mock, '/issues/13$');
+  await page.evaluate(() => document.getElementById('refresh').click()); await page.waitForTimeout(500);
+  assert.equal(nGet(mock, '/issues/13$'), n, 'vanished item is reloaded once, not on every refresh');
+});
+await test('detail sync: closed (not merged) by someone else shows Reopen and no Approve', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Bump deps');
+  await page.locator(D + ' textarea').fill('x');
+  touch(mock.items.find((x) => x.number === 13), { state: 'closed' });
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await page.locator(D + ' button', { hasText: 'Reopen' }).count()) === 1, 'Reopen');
+  assert.equal(await page.locator(D + ' button', { hasText: 'Approve' }).isDisabled(), true);
+  assert.equal(await page.locator(D + ' button', { hasText: 'Reopen' }).isDisabled(), false);
+});
+await test('detail sync: item vanishing closes the panel cleanly when nothing is typed', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Bump deps');
+  const it = mock.items.find((x) => x.number === 13); touch(it, { state: 'closed' });
+  mock.calls.length = 0;
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => !(await page.locator(D).isVisible()), 'panel closed');
+  assert.equal(await page.locator('#list li.selected, #list li[aria-selected=true]').count(), 0);
+  assert.equal(nGet(mock, '/issues/13$'), 0);
+});
+await test('detail sync: hostile body/comment text stays inert after a background reload; CSP intact', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  touch(it, { body: '<img src=x onerror="window.__xss=9"><script>window.__xss=8</script>[j](javascript:window.__xss=7)' });
+  it.comments.push({ user: { login: 'eve<b>' }, created_at: new Date().toISOString(), body: '<img src=x onerror="window.__xss=6"> ![e](https://evil.example/t.png)' });
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await txt(page, D)).includes('Comments (2)'), 'reload');
+  assert.deepEqual(await page.evaluate(() => ({ x: window.__xss ?? null, bad: document.querySelectorAll('#detail [onerror], #detail script, #detail img[src*="evil"], #detail a[href^="javascript"]').length, csp: window.__csp })), { x: null, bad: 0, csp: [] });
+});
+await test('detail sync: nothing is sent during a rate-limit pause; a failing background reload leaves the panel intact', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  await page.locator(D + ' textarea').fill('keep me');
+  touch(it, { body: 'Changed while paused' });
+  mock.fail('GET', '/issues/10$', 403, { message: 'You have exceeded a secondary rate limit' }, { 'retry-after': '120' }, 1);
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => (await txt(page, '#banner')).includes('slow down'), 'pause banner');
+  assert.equal(await page.locator(D + ' textarea').inputValue(), 'keep me');
+  assert.equal(await page.locator(D).isVisible(), true);
+  mock.calls.length = 0;
+  await page.evaluate(() => document.getElementById('refresh').click()); await page.waitForTimeout(600);
+  assert.equal(mock.calls.length, 0, 'zero requests while paused');
+});
+await test('detail sync: skipped while an action is in progress, then the action refreshes the panel once', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  let release; const gate = new Promise((r) => { release = r; });
+  let posted = 0;
+  await page.route(/\/issues\/10\/comments$/, async (route) => { if (route.request().method() === 'POST') { posted++; await gate; } await route.fallback(); });
+  await page.locator(D + ' textarea').fill('my comment');
+  await page.locator(D + ' button', { hasText: 'Comment' }).click();
+  await until(async () => posted === 1, 'POST sent');
+  touch(it, { body: 'Changed mid-action' }); mock.calls.length = 0;
+  await page.evaluate(() => document.getElementById('refresh').click()); await page.waitForTimeout(600);
+  assert.equal(nGet(mock, '/issues/10$'), 0, 'no detail reload while busy');
+  assert.equal(await page.locator(D + ' button', { hasText: 'Comment' }).isDisabled(), true, 'action buttons untouched');
+  release();
+  await until(async () => (await txt(page, D)).includes('Changed mid-action'), 'post-action reload');
+});
+await test('detail sync: not re-rendered behind an open bulk dialog; syncs after it closes', async ({ page, mock }) => {
+  await tab(page, 2); await settled(page); await open_(page, 'Add dark mode');
+  await page.locator('#list li input[type=checkbox]:not(:disabled)').first().check();
+  await page.locator('#bulkapprove').click(); await page.locator('#bulkcancel').waitFor();
+  touch(mock.items.find((x) => x.number === 10), { body: 'Changed behind dialog' }); mock.calls.length = 0;
+  await page.evaluate(() => document.getElementById('refresh').click()); await page.waitForTimeout(700);
+  assert.equal(nGet(mock, '/issues/10$'), 0);
+  assert.doesNotMatch(await txt(page, D), /Changed behind dialog/);
+  await page.locator('#bulkcancel').click();
+  await until(async () => (await txt(page, D)).includes('Changed behind dialog'), 'sync after dialog closes');
+  assert.equal(nGet(mock, '/issues/10$'), 1);
+});
+await test('detail sync: race - selecting another item while a background reload is in flight keeps the new item', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  let release; const gate = new Promise((r) => { release = r; }); let held = 0;
+  await page.route(/\/repos\/acme\/web\/issues\/10$/, async (route) => { held++; await gate; await route.fallback(); });
+  touch(it, { body: 'A changed' });
+  await page.evaluate(() => document.getElementById('refresh').click());
+  await until(async () => held === 1, 'A reload in flight');
+  await row(page, 'Bump deps').click();
+  await page.locator(D + ' h3', { hasText: 'other/tools#13' }).waitFor();
+  release(); await page.waitForTimeout(800);
+  assert.match(await txt(page, D), /other\/tools#13/);
+  assert.doesNotMatch(await txt(page, D), /A changed|acme\/web#10/);
+  assert.equal(await page.locator('.synced').count(), 0);
+});
+await test('detail sync: back-to-back refreshes do not overlap reloads; the latest change still wins', async ({ page, mock }) => {
+  await tab(page, 2); await open_(page, 'Add dark mode');
+  const it = mock.items.find((x) => x.number === 10);
+  let release; const gate = new Promise((r) => { release = r; }); let held = 0;
+  await page.route(/\/repos\/acme\/web\/issues\/10$/, async (route) => { held++; if (held === 1) await gate; await route.fallback(); });
+  touch(it, { body: 'first edit' });
+  await page.evaluate(() => document.getElementById('refresh').click()); await until(async () => held === 1, 'first reload in flight');
+  touch(it, { body: 'second edit' });
+  await page.evaluate(() => document.getElementById('refresh').click()); await page.waitForTimeout(600);
+  assert.equal(held, 1, 'no overlapping reload while one is in flight');
+  release();
+  await until(async () => (await txt(page, D)).includes('second edit'), 'latest wins');
+  await page.waitForTimeout(400);
+  assert.equal(held, 2);
+});
 await test('XSS: scripts/handlers/javascript: links in body, comments and titles are inert', async ({ page }) => {
   await tab(page, 2); await open_(page, 'Add dark mode');
   const r = await page.evaluate(() => ({
