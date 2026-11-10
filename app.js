@@ -548,6 +548,7 @@ async function refresh(auto = false) {
   const detail = $('detail'), y = window.scrollY, dy = detail.scrollTop;
   renderTabs(); renderRepos(); renderList(); renderUpdated();
   window.scrollTo(window.scrollX, y); detail.scrollTop = dy;
+  syncDetail();
   scheduleAuto();
   if (paused()) return;
   loadPrStatuses();
@@ -840,7 +841,7 @@ async function loadPrStatuses() {
     while (idx < prs.length && state.token === token) {
       if (paused()) { idx = prs.length; break; }
       const i = prs[idx++];
-      try { const st = await prStatus(i); if (state.token !== token) return; st.u = i.updated_at; st.at = Date.now(); state.status.set(i.id, st); permBanner(); renderList(); }
+      try { const st = await prStatus(i); if (state.token !== token) return; st.u = i.updated_at; st.at = Date.now(); state.status.set(i.id, st); permBanner(); renderList(); if (i.id === state.selected) syncDetailStatus(st); }
       catch (e) {
         if (state.token !== token) return;
         if (e.status === 401 || e.status === 429) { banner(e.message); idx = prs.length; }
@@ -956,12 +957,34 @@ function updateWaitCount() {
 // ---- detail ----
 function closeDetail() { $('detail').hidden = true; $('layout').classList.remove('open'); }
 
-async function select(i) {
+// Detail-panel UI preservation (small, isolated helpers; may overlap with the list scroll/focus fix on branch fix-list-focus).
+function captureDetailUi() {
+  const d = $('detail'), ta = d.querySelector('textarea'), a = document.activeElement;
+  const ui = { top: d.scrollTop, text: ta ? ta.value : '', focus: null };
+  if (ta && a === ta) ui.focus = { kind: 'ta', s: ta.selectionStart, e: ta.selectionEnd };
+  else if (a && d.contains(a) && a.matches('button, a[href]')) ui.focus = { kind: 'btn', n: [...d.querySelectorAll('button, a[href]')].indexOf(a) };
+  return ui;
+}
+function restoreDetailUi(ui) {
+  const d = $('detail'), ta = d.querySelector('textarea');
+  if (ta && ui.text) ta.value = ui.text;
+  if (ui.focus && ui.focus.kind === 'ta' && ta) { ta.focus(); try { ta.setSelectionRange(ui.focus.s, ui.focus.e); } catch (e) { /* ignore */ } }
+  else if (ui.focus && ui.focus.kind === 'btn') { const b = d.querySelectorAll('button, a[href]')[ui.focus.n]; if (b && !b.disabled) b.focus(); }
+  d.scrollTop = ui.top;
+}
+
+// silent = true: re-render the open panel in place (no "Loading…", keeps scroll, typed comment and focus; errors are ignored).
+async function select(i, silent = false) {
   state.selected = i.id; state.cursor = i.id;
-  renderList();
-  const d = $('detail'); clear(d);
-  d.hidden = false; $('layout').classList.add('open');
-  put(d, h('p', {}, 'Loading…'));
+  const run = state.detailRun = (state.detailRun || 0) + 1;
+  state.syncing = silent ? run : 0; // a newer selection supersedes any in-flight background reload
+  if (!silent) {
+    state.detailGone = false; state.syncAgain = false;
+    renderList();
+    const d = $('detail'); clear(d);
+    d.hidden = false; $('layout').classList.add('open');
+    put(d, h('p', {}, 'Loading…'));
+  }
   try {
     const [owner, repo] = repoOf(i).split('/');
     const base = `/repos/${owner}/${repo}`;
@@ -974,9 +997,49 @@ async function select(i) {
       isPr ? getMe().catch(() => null) : null,
     ]);
     if (st) { state.status.set(i.id, st); permBanner(); }
-    if (state.selected !== i.id) return;
+    if (state.selected !== i.id || state.detailRun !== run) return; // stale: another item/selection won
+    if (silent && (state.busy > 0 || state.hold > 0 || bulkOpen())) return; // the user started an action meanwhile: never re-render under it (the next refresh retries)
+    const ui = silent ? captureDetailUi() : null;
+    state.detailU = i.updated_at; state.detailCtx = { i, base, full, comments, files, me }; state.detailSig = stSig(st); state.detailRendered = run;
     renderDetail(i, base, full, comments, files, st, me);
-  } catch (e) { banner(e.message); closeDetail(); }
+    if (ui) { restoreDetailUi(ui); markSynced(); }
+    if (silent) { state.syncing = 0; if (state.syncAgain) { state.syncAgain = false; syncDetail(); } }
+  } catch (e) { if (!silent) { banner(e.message); closeDetail(); } }
+  finally { if (silent && state.syncing === run) { state.syncing = 0; state.syncAgain = false; } }
+}
+
+// Unobtrusive note in the panel's header row (inline, so nothing below it moves) that the content changed under the user.
+function markSynced() {
+  const m = $('detail').querySelector('.meta');
+  if (m) put(m, h('span', { class: 'synced', role: 'status' }, 'Updated on GitHub'));
+}
+const stSig = (st) => !st ? '' : JSON.stringify([st.ci, st.review, st.pr && [st.pr.state, st.pr.draft, st.pr.mergeable, st.pr.mergeable_state], ((st.checks || {}).check_runs || []).map((r) => [r.name, r.status, r.conclusion])]);
+const detailQuiet = () => state.busy === 0 && !(state.hold > 0) && !bulkOpen();
+// A background status result for the open PR (CI turning green does not move updated_at): re-render in place from the cached detail, no extra request.
+function syncDetailStatus(st) {
+  const c = state.detailCtx;
+  if (!c || !c.i.pull_request || $('detail').hidden || state.selected !== c.i.id || state.syncing || state.detailRendered !== state.detailRun || !detailQuiet()) return;
+  if (!st || !st.pr || stSig(st) === state.detailSig) return;
+  if (st.pr.state !== c.full.state) { if (!paused()) select(c.i, true); return; } // closed/reopened by someone else: reload once so the actions follow
+  const ui = captureDetailUi();
+  state.detailSig = stSig(st);
+  renderDetail(c.i, c.base, c.full, c.comments, c.files, st, c.me);
+  restoreDetailUi(ui); markSynced();
+}
+
+// After a list refresh: if the open item changed on GitHub (its updated_at moved), reload the panel in the background.
+function syncDetail() {
+  if (!state.selected || $('detail').hidden || !detailQuiet() || paused()) return;
+  if (state.syncing) { state.syncAgain = true; return; } // never overlap: re-check once the running reload finishes
+  const cur = SEARCH_TABS.flatMap((t) => state.data[t.id] || []).find((x) => x.id === state.selected);
+  if (cur) { state.detailGone = false; if (state.detailU && cur.updated_at !== state.detailU) select(cur, true); return; }
+  // The item left every list (closed/merged by someone else, or no longer relevant).
+  const ta = $('detail').querySelector('textarea');
+  if (ta && ta.value.trim()) { // unsent comment text: keep the panel, and reload once so its actions show the new state
+    if (!state.detailGone && state.detailCtx && state.detailCtx.i.id === state.selected) { state.detailGone = true; select(state.detailCtx.i, true); }
+    return;
+  }
+  closeDetail(); state.selected = null; renderList();
 }
 
 function renderDetail(i, base, full, comments, files, st, me) {
@@ -1009,15 +1072,17 @@ function renderDetail(i, base, full, comments, files, st, me) {
 
   const ta = h('textarea', { placeholder: 'Comment (optional for approve)' });
   const btns = [];
+  const closed = full.state === 'closed';
+  const merged = isPr && !!(full.pull_request && full.pull_request.merged_at);
   const act = (label, fn, cls = '') => {
     const b = h('button', { type: 'button', class: cls, onclick: async () => {
       btns.forEach((x) => { x.disabled = true; });
-      state.busy++;
+      state.busy++; state.hold = (state.hold || 0) + 1;
       let held = true;
       const release = () => { if (held) { held = false; state.busy--; } };
       try { await fn(); banner(label + ': done', true); release(); await refresh(); if (state.selected === i.id) select(i); }
       catch (e) { banner(e.message); btns.forEach((x) => { x.disabled = x.dataset.locked === '1'; }); }
-      finally { release(); scheduleAuto(); }
+      finally { release(); state.hold--; scheduleAuto(); }
     } }, label);
     btns.push(b); return b;
   };
@@ -1035,6 +1100,7 @@ function renderDetail(i, base, full, comments, files, st, me) {
     const reqChanges = act('Request changes', () => { needText(); return review('REQUEST_CHANGES'); }, 'danger');
     if (noReview) { approve.disabled = true; reqChanges.disabled = true; approve.dataset.locked = reqChanges.dataset.locked = '1'; }
     reviewNote = own ? 'GitHub does not allow approving your own PR'
+      : merged ? 'This PR was merged, so it cannot be reviewed or reopened'
       : full.state !== 'open' ? 'This PR is closed or merged, so it cannot be reviewed'
       : isDraft ? 'This PR is a draft; reviews may be rejected until it is ready' : null;
     put(row, 
@@ -1044,8 +1110,9 @@ function renderDetail(i, base, full, comments, files, st, me) {
         await gh(`${base}/pulls/${i.number}/merge`, { method: 'PUT', body: { merge_method: 'merge' } });
       }, 'danger'));
   }
-  const closed = full.state === 'closed';
-  put(row, act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : ''));
+  const toggle = act(closed ? 'Reopen' : 'Close', () => gh(`${base}/issues/${i.number}`, { method: 'PATCH', body: { state: closed ? 'open' : 'closed' } }), isPr ? 'danger' : '');
+  if (merged) { toggle.disabled = true; toggle.dataset.locked = '1'; }
+  put(row, toggle);
   put(d, h('h3', {}, 'Actions'), ta, row, reviewNote ? h('div', { class: 'meta review-note' }, reviewNote) : null);
 }
 
@@ -1080,6 +1147,7 @@ function closeBulk() {
   renderList(); renderToolbar();
   const target = back && back.isConnected && !back.closest('[hidden]') ? back : document.body;
   if (target !== document.body) target.focus();
+  syncDetail(); // a change deferred while the dialog was open
 }
 function renderBulk() {
   const d = $('bulk'); clear(d);

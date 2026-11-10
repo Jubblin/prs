@@ -131,3 +131,4 @@ button.wait:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 #waitbanner[hidden]{display:none}
 #waitbox{display:flex;gap:.3rem;align-items:center}
 #waitbox[hidden]{display:none}
+.synced{color:var(--muted);font-style:italic}
