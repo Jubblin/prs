@@ -2,7 +2,7 @@
 
 The app is a static, dependency-free site with no build step. Testing has three layers:
 
-1. **Mocked-API end-to-end checks** (automated, `node tests/run.mjs`): a headless browser (Chromium by default, Firefox on request) drives the real `index.html`/`app.js` while a small in-memory fake of api.github.com answers every request. Fast, deterministic, can inject any HTTP error.
+1. **Mocked-API end-to-end checks** (automated, `node tests/run.mjs`): a headless browser (Chromium by default, Firefox or WebKit on request) drives the real `index.html`/`app.js` while a small in-memory fake of api.github.com answers every request. Fast, deterministic, can inject any HTTP error.
 2. **Manual checklist** (below): covers every feature and error case, including things the mock cannot prove.
 3. **Real-GitHub smoke test** (below): a short run against a throwaway repo and token.
 
@@ -17,6 +17,7 @@ cd tests
 npm install --no-save --no-package-lock playwright
 npx playwright install chromium   # CI also passes --with-deps
 npx playwright install firefox    # only needed for BROWSER=firefox
+npx playwright install webkit     # only needed for BROWSER=webkit
 cd ..
 ```
 
@@ -25,12 +26,13 @@ Then, from the repository root, one command:
 ```sh
 node tests/run.mjs            # all checks; exit code 1 if any fail
 BROWSER=firefox node tests/run.mjs   # same checks in Firefox (BROWSER defaults to chromium)
+BROWSER=webkit node tests/run.mjs    # same checks in WebKit
 node tests/run.mjs bulk       # only checks whose name contains "bulk"
 bash tests/create-pat.test.sh # shell checks for scripts/create-pat.sh (no network)
 node tests/shots.mjs          # regenerate docs/img/*.png from the mock
 ```
 
-CI runs both suites (`node tests/run.mjs` and `bash tests/create-pat.test.sh`) with exactly these commands on every pull request and on push to `main` (`.github/workflows/tests.yml`). It uses mocked responses only, so it needs no secrets and does not touch real GitHub. It also runs nightly at 03:17 UTC (schedule, default branch only) and can be started by hand (`workflow_dispatch`); those two events run a matrix of Chromium and Firefox (`BROWSER` env var, one job each), while pull request and push runs stay Chromium-only to keep them fast. `create-pat.test.sh` runs only in the Chromium job. If a scheduled run fails, a separate job (`issues: write` only) opens (once, however many browsers failed) an issue titled `Nightly tests failed`, or comments with the run URL on the open one instead of creating a duplicate; it never runs for pull requests or pushes. GitHub disables scheduled workflows after 60 days without repository activity, so re-enable it in the Actions tab if nightly runs stop.
+CI runs both suites (`node tests/run.mjs` and `bash tests/create-pat.test.sh`) with exactly these commands on every pull request and on push to `main` (`.github/workflows/tests.yml`). It uses mocked responses only, so it needs no secrets and does not touch real GitHub. It also runs nightly at 03:17 UTC (schedule, default branch only) and can be started by hand (`workflow_dispatch`); those two events run a matrix of Chromium, Firefox and WebKit (`BROWSER` env var, one job each), while pull request and push runs stay Chromium-only to keep them fast. `create-pat.test.sh` runs only in the Chromium job. If a scheduled run fails, a separate job (`issues: write` only) opens (once, however many browsers failed) an issue titled `Nightly tests failed`, or comments with the run URL on the open one instead of creating a duplicate; it never runs for pull requests or pushes. GitHub disables scheduled workflows after 60 days without repository activity, so re-enable it in the Actions tab if nightly runs stop.
 
 If Playwright lives elsewhere, point Node at it: `NODE_PATH=/path/to/node_modules node tests/run.mjs`.
 

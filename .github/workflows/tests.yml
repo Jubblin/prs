@@ -23,8 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PR and push runs stay chromium-only; nightly and manual runs add firefox.
-        browser: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["chromium","firefox"]' || '["chromium"]') }}
+        # PR and push runs stay chromium-only; nightly and manual runs add firefox and webkit.
+        browser: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["chromium","firefox","webkit"]' || '["chromium"]') }}
     env:
       BROWSER: ${{ matrix.browser }}
     steps:

@@ -13,7 +13,7 @@ export function loadPlaywright() {
 // Browser under test: BROWSER=chromium (default) | firefox | webkit.
 export function launchBrowser(pw) {
   const name = process.env.BROWSER || 'chromium';
-  if (!['chromium', 'firefox', 'webkit'].includes(name)) { console.error(`Unknown BROWSER "${name}" (use chromium or firefox)`); process.exit(2); }
+  if (!['chromium', 'firefox', 'webkit'].includes(name)) { console.error(`Unknown BROWSER "${name}" (use chromium, firefox or webkit)`); process.exit(2); }
   return pw[name].launch();
 }
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
