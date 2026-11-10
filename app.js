@@ -80,7 +80,15 @@ class ApiError extends Error {
   constructor(msg, status) { super(msg); this.status = status; }
 }
 
+// Space out write requests: GitHub's secondary limits penalise bursts of content-creating calls.
+let lastWrite = 0;
+const WRITE_GAP_MS = 1000;
 async function gh(path, opts = {}) {
+  if (opts.method && opts.method !== 'GET') {
+    const slot = Math.max(Date.now(), lastWrite + WRITE_GAP_MS);
+    lastWrite = slot;
+    if (slot > Date.now()) await new Promise((r) => setTimeout(r, slot - Date.now()));
+  }
   const res = await fetch(API + path, {
     method: opts.method || 'GET',
     headers: {
@@ -110,6 +118,13 @@ async function gh(path, opts = {}) {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
     state.rateLimitUntil = reset || Date.now() + 60000;
     throw new ApiError('Rate limit exceeded. Resets at ' + new Date(reset).toLocaleTimeString() + '.', 429);
+  }
+  // Secondary rate limit: 403/429 with Retry-After (or an abuse/secondary-limit message), remaining quota not zero.
+  const retryAfter = Number(res.headers.get('retry-after'));
+  if ((res.status === 403 || res.status === 429) && (retryAfter > 0 || /secondary rate limit|abuse detection/i.test(msg))) {
+    const secs = retryAfter > 0 ? retryAfter : 60;
+    state.rateLimitUntil = Date.now() + secs * 1000;
+    throw new ApiError('GitHub secondary rate limit hit (too many requests too quickly). Pausing for ' + secs + 's; resumes at ' + new Date(state.rateLimitUntil).toLocaleTimeString() + '.', 429);
   }
   throw new ApiError(`GitHub API error ${res.status}${msg ? ': ' + msg : ''}`, res.status);
 }
@@ -789,7 +804,7 @@ async function loadPrStatuses() {
       }
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
   renderList();
 }
 
@@ -873,7 +888,7 @@ async function loadWaitTimes() {
       updateWaitCount(); if (state.tab === 'waiting') renderList();
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
   if (state.token !== token) return;
   if (state.waitRun === run) {
     for (const { i } of todo) state.waitPending.delete(i.id);

@@ -336,6 +336,12 @@ await test('rate limit (403 + remaining 0) shows reset banner', async ({ page, m
   await page.locator('#refresh').click();
   await page.waitForFunction(() => /Rate limit exceeded/.test(document.getElementById('banner').textContent));
 });
+await test('secondary rate limit (403 + Retry-After) shows pause banner and pauses auto refresh', async ({ page, mock }) => {
+  mock.fail('GET', '/search/issues', 403, { message: 'You have exceeded a secondary rate limit.' }, { 'retry-after': '120' });
+  await page.locator('#refresh').click();
+  await page.waitForFunction(() => /secondary rate limit/.test(document.getElementById('banner').textContent));
+  assert.ok(await page.evaluate(() => document.getElementById('banner').textContent.includes('120s')));
+});
 
 // ---- detail, markdown, XSS, images ----
 await test('detail: shows body, comments, checks, files, state; Esc and Close close it', async ({ page }) => {
@@ -465,6 +471,7 @@ await test('actions: close then reopen an issue flips label and state', async ({
   assert.equal(mock.called('PATCH', '/issues/20')[0].body.state, 'closed');
   await page.getByRole('button', { name: 'Reopen' }).click();
   await page.getByRole('button', { name: 'Close' }).last().waitFor();
+  for (let n = 0; n < 40 && mock.called('PATCH', '/issues/20').length < 2; n++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(mock.called('PATCH', '/issues/20')[1].body.state, 'open');
 });
 await test('detail: load failure (404) shows banner and closes panel', async ({ page, mock }) => {
