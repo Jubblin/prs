@@ -48,7 +48,7 @@ Not covered automatically: a bulk batch running at the exact moment the automati
 
 ## Verified vs. NOT verified
 
-**Verified against mocked APIs** (107 browser checks plus 16 shell checks, all passing at the time of writing): everything listed above, in headless Chromium and headless Firefox (80/80 in both, now 107/107, after two fixes found by the first Firefox run: Firefox restored the text filter after reload, so the field now has `autocomplete="off"`; and the CSP check now counts `securitypolicyviolation` events in the page instead of console messages, which Firefox words differently. No checks are skipped in Firefox. Firefox runs nightly and on demand, not on every PR).
+**Verified against mocked APIs** (107 browser checks plus 16 shell checks, all passing at the time of writing): everything listed above, in headless Chromium, Firefox and WebKit (107/107 in all three; the WebKit run needed two test-harness accommodations, no app change: fetches cancelled by a reload surface as uncaught "access control checks" errors in WebKit and are ignored while a navigation is in progress, and WebKit reports a `style-src-attr` CSP violation for every `<select>` element itself, reproducible on a bare page, so exactly those are ignored by line number). Earlier: 80/80 in both, now 107/107, after two fixes found by the first Firefox run: Firefox restored the text filter after reload, so the field now has `autocomplete="off"`; and the CSP check now counts `securitypolicyviolation` events in the page instead of console messages, which Firefox words differently. No checks are skipped in Firefox. Firefox runs nightly and on demand, not on every PR).
 
 **NOT verified on real GitHub / real browsers:**
 - The mock is written from our reading of the API, not generated from it. Real response shapes, pagination (`per_page=100` only, no paging), search ranking, and field availability (e.g. fine-grained-token 403 vs 404 behaviour, `mergeable_state` values, `check-runs` for forks) may differ.
@@ -56,7 +56,7 @@ Not covered automatically: a bulk batch running at the exact moment the automati
 - Actual merge, approve, close and comment side effects and branch protection rules (required reviews, merge queues, "Contents: Write" requirement).
 - Image loading from real `github.com`/`githubusercontent.com` URLs (private-repo attachment URLs, redirects, signed URLs).
 - Real CSP behaviour on a deployed GitHub Pages origin (headers, `frame-ancestors`, which a `<meta>` CSP cannot set).
-- Safari, mobile browsers, and headed Firefox/Chromium and real touch input; screen readers and keyboard focus order beyond what is asserted.
+- Safari itself (WebKit is covered through Playwright's WebKit build, not Safari), mobile browsers, and headed Firefox/Chromium and real touch input; screen readers and keyboard focus order beyond what is asserted.
 - Large accounts (hundreds of PRs, search capped at 50 per query) and GitHub Enterprise (the API host is hard-coded).
 
 ## Manual checklist

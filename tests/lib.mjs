@@ -32,14 +32,24 @@ export async function open(browser, url, { token = 'tok', mock = createMock(), v
   const context = await browser.newContext({ viewport, colorScheme });
   const page = await context.newPage();
   const errors = [], hosts = new Set();
-  page.on('pageerror', (e) => errors.push(e.message));
+  // Fetches still in flight when the page navigates (tests reload to install a fake clock) are cancelled by the engine.
+  // WebKit reports each as an uncaught "Fetch API cannot load ... due to access control checks" error; Chromium and Firefox stay silent.
+  // That is the engine tearing down the old document, not an app bug, so errors that arrive during a navigation are ignored.
+  let navigating = false;
+  page.on('request', (r) => { if (r.isNavigationRequest() && r.frame() === page.mainFrame()) navigating = true; });
+  page.on('load', () => { navigating = false; });
+  page.on('pageerror', (e) => { if (!(navigating && /access control checks/.test(e.message))) errors.push(e.message); });
   page.on('dialog', (d) => d.dismiss());
   await page.route('https://api.github.com/**', (r) => mock.handle(r));
   await page.route(/^https:\/\/(?!api\.github\.com)[^/]*(github\.com|githubusercontent\.com|githubassets\.com)\//, (r) => { hosts.add(new URL(r.request().url()).hostname); return r.fulfill({ status: 200, contentType: 'image/png', body: PNG }); });
   page.on('request', (r) => { const u = new URL(r.url()); if (u.hostname !== '127.0.0.1') hosts.add(u.hostname); });
   await page.route(/evil\.example/, (r) => r.abort());
   // securitypolicyviolation events work in every browser; console-message wording does not (Firefox differs).
-  await page.addInitScript(() => { window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI)); });
+  // WebKit reports a style-src-attr violation for every <select> element itself (engine-generated; reproduces on a bare page
+  // with only a <select> and style-src 'self'; no inline style comes from the app). Ignore exactly those, located by the
+  // line of each <select> tag in index.html, so any other inline-style violation still fails the CSP checks.
+  const selectLines = fs.readFileSync(path.join(root, 'index.html'), 'utf8').split('\n').flatMap((l, i) => (l.includes('<select') ? [i + 1] : []));
+  await page.addInitScript((sel) => { window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => { if (e.violatedDirective === 'style-src-attr' && sel.includes(e.lineNumber)) return; window.__csp.push(e.violatedDirective + ' ' + e.blockedURI); }); }, selectLines);
   const init = { ...(token ? { gh_dashboard_token: token } : {}), ...storage };
   await page.addInitScript((s) => { if (!sessionStorage.__init) { sessionStorage.__init = 1; for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } }, init);
   await page.goto(url);
