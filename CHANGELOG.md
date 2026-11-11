@@ -22,6 +22,18 @@ All notable changes to this project, grouped by pull request. Format based on [K
 - "Waiting on me" measures from when the review was requested or the item assigned to you (issue events; team requests handled; re-request resets the clock; withdrawn requests are excluded), labelled `since requested` / `since assigned`, falling back to `since opened`; lazy, cached, at most 2 concurrent lookups
 - "Waiting on me" rows show the exact date the age is measured from (local time and zone) via a keyboard-focusable label with tooltip, overlay and screen-reader description
 
+## 0.1.0 (2026-11-11)
+
+
+### Features
+
+* stamp the version into the deployed site (footer and version.json) ([#29](https://github.com/Jubblin/prs/issues/29)) ([149f90a](https://github.com/Jubblin/prs/commit/149f90a88bcd64f9cc96b28e291088f0cae2331d))
+
+
+### Bug Fixes
+
+* read the stamped version from the release manifest and redeploy after a release ([#31](https://github.com/Jubblin/prs/issues/31)) ([4481e13](https://github.com/Jubblin/prs/commit/4481e13e83064fab0cc2980b7bf0d3ef4a751a2e))
+
 ## 2026-11-05
 
 ### Added
