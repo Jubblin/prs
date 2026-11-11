@@ -21,6 +21,8 @@ npx playwright install webkit     # only needed for BROWSER=webkit
 cd ..
 ```
 
+On Linux, Playwright's WebKit also needs system libraries (CI gets them with `npx playwright install --with-deps webkit`). Locally, run `npx playwright install-deps webkit` inside `tests/` (asks for sudo, installs OS packages), or install the missing libraries yourself. Without them WebKit fails to launch with a "missing dependencies" or shared-library error (for example libevent, libavif or libmanette); `npx playwright install-deps --dry-run webkit` reports what is missing without changing anything. macOS and Windows need nothing extra.
+
 Then, from the repository root, one command:
 
 ```sh
