@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Stamp version info into a COPY of the site (never the working tree):
 #   scripts/stamp-version.sh <outdir>
-# Reads <outdir>/version.txt (release-please; optional), writes <outdir>/version.json
+# Reads the version from <outdir>/version.txt, else the release-please manifest, else the nearest tag, else 0.0.0; writes <outdir>/version.json
 # {version, commit, date, release} and replaces the footer label in <outdir>/index.html.
 # Git facts come from the repository this script lives in; STAMP_COMMIT, STAMP_DATE and
-# STAMP_TAG override them (used by tests/stamp-version.test.sh). Every value is validated
+# STAMP_TAG (exact tag) and STAMP_NEAREST_TAG override them (used by tests/stamp-version.test.sh). Every value is validated
 # before use; invalid values fail the run so a bad deploy never publishes.
 set -euo pipefail
 out=${1:-}
@@ -12,10 +12,29 @@ out=${1:-}
 repo=$(cd "$(dirname "$0")/.." && pwd)
 
 semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+# Version source order: (1) <outdir>/version.txt, (2) the "." entry of
+# <outdir>/.release-please-manifest.json, (3) the nearest reachable vX.Y.Z tag, (4) 0.0.0.
+# (release-please's "simple" strategy never creates version.txt, so in practice the
+# manifest, which the release PR bumps on main, is the source.) A present but invalid
+# version.txt fails loudly. A manifest without a valid "." entry, or an invalid tag, is
+# skipped (the next source is used); file content is only ever matched against the strict
+# regex and never reaches eval, sed or the shell unvalidated.
 version=0.0.0; have_version=0
 if [ -f "$out/version.txt" ]; then
   version=$(tr -d '[:space:]' < "$out/version.txt")
   have_version=1
+elif [ -f "$out/.release-please-manifest.json" ]; then
+  manifest=$(tr -d '[:space:]' < "$out/.release-please-manifest.json" | head -c 4096)
+  if [[ $manifest =~ \"\.\":\"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)\" ]]; then
+    version=${BASH_REMATCH[1]}; have_version=1
+  else
+    echo "warning: no valid \".\" version in .release-please-manifest.json; ignoring it" >&2
+  fi
+fi
+if [ $have_version = 0 ]; then
+  if [ -n "${STAMP_NEAREST_TAG+x}" ]; then near=$STAMP_NEAREST_TAG
+  else near=$(git -C "$repo" describe --tags --match 'v[0-9]*' --abbrev=0 HEAD 2>/dev/null || true); fi
+  if [[ $near =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then version=${BASH_REMATCH[1]}; have_version=1; fi
 fi
 [[ $version =~ $semver ]] || { echo "invalid version: $version" >&2; exit 1; }
 
@@ -27,7 +46,7 @@ date=${STAMP_DATE:-$(TZ=UTC git -C "$repo" log -1 --date=format-local:%Y-%m-%dT%
 if [ -n "${STAMP_TAG+x}" ]; then tag=$STAMP_TAG
 else tag=$(git -C "$repo" describe --exact-match --tags --match 'v[0-9]*' HEAD 2>/dev/null || true); fi
 release=false
-[[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && release=true
+if [[ $tag =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then release=true; version=${BASH_REMATCH[1]}; fi
 
 short=${commit:0:7}
 if [ $release = true ]; then label="v${tag#v}"
