@@ -48,7 +48,7 @@ export async function open(browser, url, { token = 'tok', mock = createMock(), v
   // WebKit reports a style-src-attr violation for every <select> element itself (engine-generated; reproduces on a bare page
   // with only a <select> and style-src 'self'; no inline style comes from the app). Ignore exactly those, located by the
   // line of each <select> tag in index.html, so any other inline-style violation still fails the CSP checks.
-  const selectLines = fs.readFileSync(path.join(root, 'index.html'), 'utf8').split('\n').flatMap((l, i) => (l.includes('<select') ? [i + 1] : []));
+  const selectLines = fs.readFileSync(path.join(root, 'index.html'), 'utf8').split('\n').flatMap((l, i) => (l.includes('<select') && !l.includes('style=') ? [i + 1] : []));
   await page.addInitScript((sel) => { window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => { if (e.violatedDirective === 'style-src-attr' && sel.includes(e.lineNumber)) return; window.__csp.push(e.violatedDirective + ' ' + e.blockedURI); }); }, selectLines);
   const init = { ...(token ? { gh_dashboard_token: token } : {}), ...storage };
   await page.addInitScript((s) => { if (!sessionStorage.__init) { sessionStorage.__init = 1; for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } }, init);
