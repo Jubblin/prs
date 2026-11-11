@@ -155,7 +155,7 @@ node tests/run.mjs        # 109 checks, exit code 1 on failure
 BROWSER=firefox node tests/run.mjs   # same checks in Firefox (npx playwright install firefox first)
 BROWSER=webkit node tests/run.mjs    # same checks in WebKit (npx playwright install webkit first; on Linux also npx playwright install-deps webkit, see docs/TESTING.md)
 bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.sh
-bash tests/stamp-version.test.sh   # 63 network-free checks for scripts/stamp-version.sh
+bash tests/stamp-version.test.sh   # 75 network-free checks for scripts/stamp-version.sh
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 
@@ -191,7 +191,7 @@ Limits and setup:
 The footer shows a small label linking to the repository's Releases page. Locally (and in any unstamped copy) it reads `dev`. The Pages deploy builds the artifact from `git archive HEAD` into `_site/` and runs `scripts/stamp-version.sh _site`, which never touches the committed files:
 - `version.json` `{version, commit, date, release}` is written next to `index.html`. `version` comes from, in order: `version.txt` (if present; invalid content fails the deploy), the `"."` entry of `.release-please-manifest.json` (bumped by the release PR; a missing or malformed entry is ignored), the nearest reachable `vX.Y.Z` tag, or `0.0.0`. Values are only matched against a strict semver regex, never evaluated.
 - `release` is `true` only when HEAD has an exact `vX.Y.Z` tag (the checkout uses `fetch-depth: 0` and `fetch-tags` so tags are visible). The label is then `vX.Y.Z`; otherwise `vX.Y.Z+<sha7>`, or `dev+<sha7>` when no source gave a version.
-- The label is replaced in `index.html` at deploy time (no script, no extra fetch, CSP unchanged). Version, commit, date and label are validated by regex first; invalid values fail the deploy. A deploy with no tag and no `version.txt` still succeeds.
+- The label is replaced in `index.html` at deploy time, in the footer and in the page title (`GitHub PR Dashboard <label>`, e.g. `GitHub PR Dashboard v0.1.0`; local copies keep the plain title). The footer is visible on the sign-in screen too, so no separate sign-in line is added (no script, no extra fetch, CSP unchanged). Version, commit, date and label are validated by regex first; invalid values fail the deploy. A deploy with no tag and no `version.txt` still succeeds.
 
 ## Screenshots
 

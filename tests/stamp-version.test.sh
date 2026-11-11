@@ -13,20 +13,24 @@ has() { grep -q -- "$2" "$1"; }
 d=$(mk 1.2.3); ok run "$d" STAMP_TAG=v1.2.3
 ok has "$d/index.html" '>v1.2.3</a>'
 ok has "$d/version.json" '"version":"1.2.3","commit":"'$SHA'","date":"'$DATE'","release":true'
-d=$(mk 1.2.3); ok run "$d" STAMP_TAG=
+ok has "$d/index.html" '<title>GitHub PR Dashboard v1.2.3</title>'
+d=$(mk 1.2.3); ok run "$d" STAMP_TAG= STAMP_NEAREST_TAG=
 ok has "$d/index.html" '>v1.2.3+0123456</a>'
+ok has "$d/index.html" '<title>GitHub PR Dashboard v1.2.3+0123456</title>'
 ok has "$d/version.json" '"release":false'
-d=$(mk); ok run "$d" STAMP_TAG=
+d=$(mk); ok run "$d" STAMP_TAG= STAMP_NEAREST_TAG=
 ok has "$d/index.html" '>dev+0123456</a>'
+ok has "$d/index.html" '<title>GitHub PR Dashboard dev+0123456</title>'
 ok has "$d/version.json" '"version":"0.0.0".*"release":false'
 d=$(mk 1.2.3); ok run "$d" STAMP_TAG=v9.9
 ok has "$d/version.json" '"release":false'
 ok has index.html '>dev</a>'
+ok has index.html '<title>GitHub PR Dashboard</title>'
 ok test ! -e version.json
-for v in '1.2' '1.2.3;rm' '$(id)' 'v1.2.3' '1.2.3|x'; do d=$(mk "$v"); ok no run "$d" STAMP_TAG=; done
-C=zzz; d=$(mk 1.2.3); ok no run "$d" STAMP_TAG=; C=
-D='2026-11-11'; d=$(mk 1.2.3); ok no run "$d" STAMP_TAG=; D=
-d=$(mktemp -d); echo '<html></html>' > "$d/index.html"; ok no run "$d" STAMP_TAG=
+for v in '1.2' '1.2.3;rm' '$(id)' 'v1.2.3' '1.2.3|x'; do d=$(mk "$v"); ok no run "$d" STAMP_TAG= STAMP_NEAREST_TAG=; done
+C=zzz; d=$(mk 1.2.3); run "$d" STAMP_TAG= STAMP_NEAREST_TAG=; ok has "$d/index.html" '<title>GitHub PR Dashboard</title>'; ok test ! -e "$d/version.json"; C=zzz; d=$(mk 1.2.3); ok no run "$d" STAMP_TAG= STAMP_NEAREST_TAG=; C=
+D='2026-11-11'; d=$(mk 1.2.3); ok no run "$d" STAMP_TAG= STAMP_NEAREST_TAG=; D=
+d=$(mktemp -d); echo '<html></html>' > "$d/index.html"; ok no run "$d" STAMP_TAG= STAMP_NEAREST_TAG=
 ok no bash scripts/stamp-version.sh
 ok no bash scripts/stamp-version.sh /nonexistent
 d=$(mk 1.2.3); bash scripts/stamp-version.sh "$d" >/dev/null 2>&1; ok test -f "$d/version.json"
@@ -56,9 +60,12 @@ for m in '{".":"$(id)"}' '{".":"1.2.3;rm -rf /"}' '{".":"0.1"}' 'not json' '{"."
   d=$(mm "$m"); ok run "$d" STAMP_TAG= STAMP_NEAREST_TAG=
   ok has "$d/index.html" '>dev+0123456</a>'
   ok no grep -q 'id)\|rm -rf' "$d/index.html" "$d/version.json"
+  ok has "$d/index.html" '<title>GitHub PR Dashboard dev+0123456</title>'
 done
 d=$(mk); ok run "$d" STAMP_TAG= STAMP_NEAREST_TAG='v1.2.3;id'
 ok has "$d/index.html" '>dev+0123456</a>'
+# a copy without the title placeholder fails
+d=$(mk 1.2.3); sed -i 's|<title>GitHub PR Dashboard</title>|<title>x</title>|' "$d/index.html"; ok no run "$d" STAMP_TAG= STAMP_NEAREST_TAG=
 # real git: nearest reachable tag, in a scratch repo
 r=$(mktemp -d); git -C "$r" init -q; mkdir "$r/scripts"; cp scripts/stamp-version.sh "$r/scripts/"; cp index.html "$r/"
 git -C "$r" -c user.name=t -c user.email=t@t add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -qm x; git -C "$r" tag v0.7.0

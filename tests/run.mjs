@@ -1102,6 +1102,7 @@ await test('footer: local copy shows "dev", links to Releases, sits below the st
   await settled(page);
   const a = page.locator('#footer #version');
   assert.equal(await a.innerText(), 'dev');
+  assert.equal(await page.title(), 'GitHub PR Dashboard');
   assert.equal(await a.getAttribute('href'), 'https://github.com/Jubblin/prs/releases');
   for (const vp of [{ width: 375, height: 700 }, { width: 1280, height: 800 }]) {
     await page.setViewportSize(vp); await a.scrollIntoViewIfNeeded();
@@ -1121,6 +1122,7 @@ await test('footer: stamped copy shows the label and version.json matches', asyn
   try {
     await page.goto(s.url); await page.locator('#list li').first().waitFor();
     assert.equal(await txt(page, '#footer #version'), 'v1.2.3+abcdef0');
+    assert.equal(await page.title(), 'GitHub PR Dashboard v1.2.3+abcdef0');
     const j = await (await fetch(s.url + 'version.json')).json();
     assert.deepEqual(j, { version: '1.2.3', commit: sha, date: '2026-11-11T10:00:00Z', release: false });
     assert.deepEqual(await page.evaluate(() => window.__csp), [], 'no CSP violations');

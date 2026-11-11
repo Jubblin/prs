@@ -2,7 +2,7 @@
 # Stamp version info into a COPY of the site (never the working tree):
 #   scripts/stamp-version.sh <outdir>
 # Reads the version from <outdir>/version.txt, else the release-please manifest, else the nearest tag, else 0.0.0; writes <outdir>/version.json
-# {version, commit, date, release} and replaces the footer label in <outdir>/index.html.
+# {version, commit, date, release} and replaces the footer label and the page title ("GitHub PR Dashboard <label>") in <outdir>/index.html.
 # Git facts come from the repository this script lives in; STAMP_COMMIT, STAMP_DATE and
 # STAMP_TAG (exact tag) and STAMP_NEAREST_TAG override them (used by tests/stamp-version.test.sh). Every value is validated
 # before use; invalid values fail the run so a bad deploy never publishes.
@@ -57,7 +57,8 @@ else label="dev+$short"; fi
 printf '{"version":"%s","commit":"%s","date":"%s","release":%s}\n' "$version" "$commit" "$date" "$release" > "$out/version.json"
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
-sed "/id=\"version\"/s|>dev</a>|>$label</a>|" "$out/index.html" > "$tmp"
+sed -e "/id=\"version\"/s|>dev</a>|>$label</a>|" -e "s|<title>GitHub PR Dashboard</title>|<title>GitHub PR Dashboard $label</title>|" "$out/index.html" > "$tmp"
 grep -q ">$label</a>" "$tmp" || { echo "footer placeholder not found in $out/index.html" >&2; exit 1; }
+grep -q "<title>GitHub PR Dashboard $label</title>" "$tmp" || { echo "title placeholder not found in $out/index.html" >&2; exit 1; }
 cat "$tmp" > "$out/index.html"
 echo "stamped $label ($commit, release=$release)"
