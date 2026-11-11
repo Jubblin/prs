@@ -10,7 +10,8 @@ permissions:
 jobs:
   conventional-title:
     name: Conventional Commit title
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
+    runs-on: ubuntu-24.04
     env:
       PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
