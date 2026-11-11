@@ -40,6 +40,15 @@ If Playwright lives elsewhere, point Node at it: `NODE_PATH=/path/to/node_module
 
 How it works: `tests/lib.mjs` serves the repo root on a random localhost port; `page.route()` intercepts `https://api.github.com/**` and hands it to `tests/mock-github.mjs`, which holds fixture PRs/issues and can be told to fail any request (`mock.fail('POST', '/reviews', 422, body, headers, times)`). Image hosts are stubbed with a 1×1 PNG and `evil.example` is aborted; every outgoing host is recorded. Each check runs in a fresh browser context and also fails on any uncaught page error.
 
+## PR title check
+
+`bash tests/pr-title.sh "feat(list): add tab"` exits 0 for a Conventional Commit title and prints the reason and exits 1 otherwise. `bash tests/pr-title.test.sh` runs it over a table of titles:
+
+| Title | Result |
+| --- | --- |
+| `feat: add tab`, `fix(list): keep focus`, `feat!: drop old storage`, `chore(deps): update github-actions` | accepted |
+| `Add tab`, `feat add tab`, `Feat: x`, `feature: x`, `fix(): x`, `feat: ` | rejected |
+
 ## What the automated checks cover (all against the mock)
 
 Sign-in/401/sign-out; persistence of tab, repo and auto interval (and fallback for bad saved values); six tabs, counts, Waiting on me tab (threshold 3/7/14/30, persistence, invalid value fallback, de-duplication, empty state; age from request/assignment events incl. re-request reset, withdrawn request, team request, oldest-path rule, `since opened` fallback, events 403 and rate-limit banners, events request count across refresh/reload, cache entries of another login ignored; exact-date tooltip/description per source requested, team, assigned, opened; keyboard focus, Escape, no row opening, shortcuts still work with the label focused, inert HTML in team slug, no Invalid Date, no height change at 375px), merged assigned/mentioned query; owner-grouped repo filter, `<owner> — all repos`, case-insensitive restore; text filter; CI states (success, failure, pending, none, `no access` on 403, `error` on 500, per-PR failure) and review states, permission banner; `null` mergeable retry; rate-limit banner; detail panel content; XSS payloads in body, comments and titles; link and image allow-list cases; failing-image fallback; own/closed/draft gating; comment/approve/request-changes/merge/close/reopen including 422/403/404/405/429/500 responses and merge confirm; bulk approve (selectability reasons, selection pruning, dialog focus and Esc, shared comment, partial failure, retry, 429 stop, 401 stop); manual refresh keeping scroll, refresh failure keeping data, sticky header; auto-refresh timer (fake clock) and Off; keyboard shortcuts and their guards; CSP policy and enforcement (inline script, foreign fetch and foreign image blocked); hosts contacted; no overflow at phone width; token check (manual full probe, automatic check once per session per token across reloads, skipped while rate-limited, 401, missing-permission rendering, only GETs, token never stored in the session marker).
