@@ -42,6 +42,9 @@ jobs:
       - name: create-pat.sh checks
         if: ${{ matrix.browser == 'chromium' }}
         run: bash tests/create-pat.test.sh
+      - name: stamp-version.sh checks
+        if: ${{ matrix.browser == 'chromium' }}
+        run: bash tests/stamp-version.test.sh
       - name: pr-title.sh checks
         if: ${{ matrix.browser == 'chromium' }}
         run: bash tests/pr-title.test.sh

@@ -1,5 +1,9 @@
 // Mocked-API end-to-end checks. Usage: node tests/run.mjs [name-filter]
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { loadPlaywright, launchBrowser, serve, open, settled } from './lib.mjs';
 
 const pw = loadPlaywright();
@@ -1093,6 +1097,35 @@ await test('responsive: no horizontal overflow on a phone-sized viewport', async
   await tab(page, 2); await settled(page);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
 }, { viewport: { width: 390, height: 800 } });
+
+await test('footer: local copy shows "dev", links to Releases, sits below the sticky header at both widths', async ({ page }) => {
+  await settled(page);
+  const a = page.locator('#footer #version');
+  assert.equal(await a.innerText(), 'dev');
+  assert.equal(await a.getAttribute('href'), 'https://github.com/Jubblin/prs/releases');
+  for (const vp of [{ width: 375, height: 700 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize(vp); await a.scrollIntoViewIfNeeded();
+    const f = await a.boundingBox(), top = await page.locator('#top').boundingBox();
+    assert.ok(f.y >= top.y + top.height - 1, 'footer not covered by the sticky header at ' + vp.width);
+    assert.ok(f.x >= 0 && f.x + f.width <= vp.width, 'footer inside viewport at ' + vp.width);
+  }
+});
+await test('footer: stamped copy shows the label and version.json matches', async ({ page }) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stamp-'));
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  for (const f of ['index.html', 'app.js', 'styles.css']) fs.copyFileSync(path.join(root, f), path.join(dir, f));
+  fs.writeFileSync(path.join(dir, 'version.txt'), '1.2.3\n');
+  const sha = 'abcdef0123456789abcdef0123456789abcdef01';
+  execFileSync('bash', [path.join(root, 'scripts/stamp-version.sh'), dir], { env: { ...process.env, STAMP_COMMIT: sha, STAMP_DATE: '2026-11-11T10:00:00Z', STAMP_TAG: '' } });
+  const s = await serve(dir);
+  try {
+    await page.goto(s.url); await page.locator('#list li').first().waitFor();
+    assert.equal(await txt(page, '#footer #version'), 'v1.2.3+abcdef0');
+    const j = await (await fetch(s.url + 'version.json')).json();
+    assert.deepEqual(j, { version: '1.2.3', commit: sha, date: '2026-11-11T10:00:00Z', release: false });
+    assert.deepEqual(await page.evaluate(() => window.__csp), [], 'no CSP violations');
+  } finally { s.srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 await browser.close(); srv.close();
 const failed = results.filter(([, e]) => e);

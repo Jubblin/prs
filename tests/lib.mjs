@@ -16,12 +16,12 @@ export function launchBrowser(pw) {
   if (!['chromium', 'firefox', 'webkit'].includes(name)) { console.error(`Unknown BROWSER "${name}" (use chromium, firefox or webkit)`); process.exit(2); }
   return pw[name].launch();
 }
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-export function serve() {
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+export function serve(dir = root) {
   const srv = http.createServer((req, res) => {
     const p = req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0];
-    const f = path.join(root, p);
-    if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404).end(); return; }
+    const f = path.join(dir, p);
+    if (!f.startsWith(dir) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }).end(fs.readFileSync(f));
   });
   return new Promise((ok) => srv.listen(0, '127.0.0.1', () => ok({ srv, url: `http://127.0.0.1:${srv.address().port}/` })));
