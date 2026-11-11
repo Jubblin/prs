@@ -18,7 +18,8 @@ concurrency:
 jobs:
   mocked-tests:
     name: mocked-tests (${{ matrix.browser }})
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -34,9 +35,15 @@ jobs:
           node-version: 22
       - name: Install Playwright (dev-only, inside tests/)
         working-directory: tests
+        timeout-minutes: 8
         run: |
           npm install --no-save --no-package-lock playwright
-          npx playwright install --with-deps ${{ matrix.browser }}
+          for attempt in 1 2 3; do
+            npx playwright install --with-deps ${{ matrix.browser }} && exit 0
+            echo "Playwright install failed (attempt $attempt/3); retrying in 15s"
+            sleep 15
+          done
+          exit 1
       - name: Mocked-API end-to-end checks
         run: node tests/run.mjs
       - name: create-pat.sh checks
@@ -53,7 +60,8 @@ jobs:
     name: Open issue for failed nightly run
     needs: mocked-tests
     if: ${{ always() && github.event_name == 'schedule' && needs.mocked-tests.result == 'failure' }}
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       issues: write
