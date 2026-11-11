@@ -11,6 +11,7 @@ All notable changes to this project, grouped by pull request. Format based on [K
 - Text filter input has `autocomplete="off"` so Firefox no longer restores its value on reload (the filter is documented as not persisted)
 
 ### Added
+- Docs: the Linux system libraries Playwright's WebKit needs for local runs (`npx playwright install-deps webkit`) are documented in `docs/TESTING.md`
 - WebKit joins the nightly/manual CI matrix (Chromium + Firefox + WebKit); `BROWSER=webkit node tests/run.mjs` runs the checks locally. Pull request and push runs stay Chromium-only
 - Tests can run in Firefox: `BROWSER=firefox node tests/run.mjs` (default `chromium`); nightly and manual CI runs use a Chromium + Firefox matrix, pull request and push runs stay Chromium-only, and a failed nightly still produces a single issue
 - CI workflow (`.github/workflows/tests.yml`) running the mocked end-to-end checks and the `create-pat.sh` checks on every pull request and on push to `main`

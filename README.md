@@ -153,7 +153,7 @@ Automated end-to-end checks run against an in-memory fake of the GitHub API (dev
 cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
 node tests/run.mjs        # 107 checks, exit code 1 on failure
 BROWSER=firefox node tests/run.mjs   # same checks in Firefox (npx playwright install firefox first)
-BROWSER=webkit node tests/run.mjs    # same checks in WebKit (npx playwright install webkit first)
+BROWSER=webkit node tests/run.mjs    # same checks in WebKit (npx playwright install webkit first; on Linux also npx playwright install-deps webkit, see docs/TESTING.md)
 bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.sh
 node tests/shots.mjs      # regenerate the screenshots below
 ```
