@@ -31,6 +31,7 @@ BROWSER=firefox node tests/run.mjs   # same checks in Firefox (BROWSER defaults 
 BROWSER=webkit node tests/run.mjs    # same checks in WebKit
 node tests/run.mjs bulk       # only checks whose name contains "bulk"
 bash tests/create-pat.test.sh # shell checks for scripts/create-pat.sh (no network)
+bash tests/stamp-version.test.sh # shell checks for scripts/stamp-version.sh on temp copies (no network)
 node tests/shots.mjs          # regenerate docs/img/*.png from the mock
 ```
 
@@ -52,6 +53,8 @@ How it works: `tests/lib.mjs` serves the repo root on a random localhost port; `
 ## What the automated checks cover (all against the mock)
 
 Sign-in/401/sign-out; persistence of tab, repo and auto interval (and fallback for bad saved values); six tabs, counts, Waiting on me tab (threshold 3/7/14/30, persistence, invalid value fallback, de-duplication, empty state; age from request/assignment events incl. re-request reset, withdrawn request, team request, oldest-path rule, `since opened` fallback, events 403 and rate-limit banners, events request count across refresh/reload, cache entries of another login ignored; exact-date tooltip/description per source requested, team, assigned, opened; keyboard focus, Escape, no row opening, shortcuts still work with the label focused, inert HTML in team slug, no Invalid Date, no height change at 375px), merged assigned/mentioned query; owner-grouped repo filter, `<owner> — all repos`, case-insensitive restore; text filter; CI states (success, failure, pending, none, `no access` on 403, `error` on 500, per-PR failure) and review states, permission banner; `null` mergeable retry; rate-limit banner; detail panel content; XSS payloads in body, comments and titles; link and image allow-list cases; failing-image fallback; own/closed/draft gating; comment/approve/request-changes/merge/close/reopen including 422/403/404/405/429/500 responses and merge confirm; bulk approve (selectability reasons, selection pruning, dialog focus and Esc, shared comment, partial failure, retry, 429 stop, 401 stop); manual refresh keeping scroll, refresh failure keeping data, sticky header; auto-refresh timer (fake clock) and Off; keyboard shortcuts and their guards; CSP policy and enforcement (inline script, foreign fetch and foreign image blocked); hosts contacted; no overflow at phone width; token check (manual full probe, automatic check once per session per token across reloads, skipped while rate-limited, 401, missing-permission rendering, only GETs, token never stored in the session marker).
+
+`bash tests/stamp-version.test.sh` runs 24 checks of `scripts/stamp-version.sh` on temporary copies of `index.html` (release/non-release/missing `version.txt` labels, `version.json` content, rejection of invalid versions, commits and dates; git facts are overridden with `STAMP_COMMIT`, `STAMP_DATE` and `STAMP_TAG`). Two browser checks in `run.mjs` cover the footer: `dev` locally, and a stamped copy served from a temp directory showing the expected label with a matching `version.json`.
 
 `bash tests/create-pat.test.sh` runs 16 network-free checks of `scripts/create-pat.sh`: `--print` URLs (default, `--no-merge`, `--expires`, non-ASCII and reserved-character names under UTF-8 and C locales), argument errors, and that the token reaches curl only through a mode-600 config file, never on a command line.
 

@@ -151,10 +151,11 @@ Automated end-to-end checks run against an in-memory fake of the GitHub API (dev
 
 ```sh
 cd tests && npm install --no-save --no-package-lock playwright && npx playwright install chromium && cd ..
-node tests/run.mjs        # 107 checks, exit code 1 on failure
+node tests/run.mjs        # 109 checks, exit code 1 on failure
 BROWSER=firefox node tests/run.mjs   # same checks in Firefox (npx playwright install firefox first)
 BROWSER=webkit node tests/run.mjs    # same checks in WebKit (npx playwright install webkit first; on Linux also npx playwright install-deps webkit, see docs/TESTING.md)
 bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.sh
+bash tests/stamp-version.test.sh   # 24 network-free checks for scripts/stamp-version.sh
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 
@@ -184,6 +185,13 @@ Limits and setup:
 - Repo owner: Settings > Actions > General > Workflow permissions > tick "Allow GitHub Actions to create and approve pull requests".
 - PRs and releases created with the default `GITHUB_TOKEN` do not trigger other workflows, so the tests and the title check do not run on the release PR (and tag-triggered workflows would not fire). Use a personal access token secret as the action's `token` input if that matters.
 - Cosmetic: release-please writes its own `# Changelog` heading and section into `CHANGELOG.md`; the existing hand-written header may end up as a second heading below it. Tidy by hand in the release PR if so.
+
+## Version label
+
+The footer shows a small label linking to the repository's Releases page. Locally (and in any unstamped copy) it reads `dev`. The Pages deploy builds the artifact from `git archive HEAD` into `_site/` and runs `scripts/stamp-version.sh _site`, which never touches the committed files:
+- `version.json` `{version, commit, date, release}` is written next to `index.html`. `version` comes from `version.txt` (written by release-please), or `0.0.0` before the first release.
+- `release` is `true` only when HEAD has an exact `vX.Y.Z` tag (the checkout uses `fetch-depth: 0` and `fetch-tags` so tags are visible). The label is then `vX.Y.Z`; otherwise `vX.Y.Z+<sha7>`, or `dev+<sha7>` with no `version.txt`.
+- The label is replaced in `index.html` at deploy time (no script, no extra fetch, CSP unchanged). Version, commit, date and label are validated by regex first; invalid values fail the deploy. A deploy with no tag and no `version.txt` still succeeds.
 
 ## Screenshots
 
