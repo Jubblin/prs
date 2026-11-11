@@ -155,7 +155,7 @@ node tests/run.mjs        # 109 checks, exit code 1 on failure
 BROWSER=firefox node tests/run.mjs   # same checks in Firefox (npx playwright install firefox first)
 BROWSER=webkit node tests/run.mjs    # same checks in WebKit (npx playwright install webkit first; on Linux also npx playwright install-deps webkit, see docs/TESTING.md)
 bash tests/create-pat.test.sh   # 16 network-free checks for scripts/create-pat.sh
-bash tests/stamp-version.test.sh   # 24 network-free checks for scripts/stamp-version.sh
+bash tests/stamp-version.test.sh   # 63 network-free checks for scripts/stamp-version.sh
 node tests/shots.mjs      # regenerate the screenshots below
 ```
 
@@ -175,9 +175,9 @@ Version bumps:
 Cutting a release:
 1. Merge PRs with conventional titles into `main`. On every push to `main` the `Release` workflow opens or updates a single release PR ("chore(main): release x.y.z") with the `CHANGELOG.md` section, `version.txt` and the `.release-please-manifest.json` bump.
 2. Review that PR and merge it (or run the `Release` workflow manually to refresh it).
-3. Merging creates the tag `vX.Y.Z` and a GitHub Release with the notes. `main` changed, so the Pages deploy then runs as usual.
+3. Merging creates the tag `vX.Y.Z` and a GitHub Release with the notes. The merge's own Pages deploy runs before the tag exists, so the `Release` workflow then dispatches `pages.yml` again (job `redeploy`, `actions: write` on that job only); that deploy sees the tag and shows exactly `vX.Y.Z`. If `main` has moved on by then, the redeploy publishes the newer commit, which is untagged and reads `vX.Y.Z+<sha7>` until the next release.
 
-The first release is `0.1.0` (`initial-version` in `release-please-config.json`; the manifest stays `{}` until then).
+The first release is `0.1.0` (`initial-version` in `release-please-config.json`; the manifest stays `{}` until then). With the `simple` strategy release-please only updates a `version.txt` that already exists (`createIfMissing: false`), so none is created; the manifest is the version record.
 
 Overriding the version: put a `Release-As: x.y.z` footer in a commit message on `main`, or set `"release-as": "x.y.z"` in `release-please-config.json` (remove it again after the release).
 
@@ -189,8 +189,8 @@ Limits and setup:
 ## Version label
 
 The footer shows a small label linking to the repository's Releases page. Locally (and in any unstamped copy) it reads `dev`. The Pages deploy builds the artifact from `git archive HEAD` into `_site/` and runs `scripts/stamp-version.sh _site`, which never touches the committed files:
-- `version.json` `{version, commit, date, release}` is written next to `index.html`. `version` comes from `version.txt` (written by release-please), or `0.0.0` before the first release.
-- `release` is `true` only when HEAD has an exact `vX.Y.Z` tag (the checkout uses `fetch-depth: 0` and `fetch-tags` so tags are visible). The label is then `vX.Y.Z`; otherwise `vX.Y.Z+<sha7>`, or `dev+<sha7>` with no `version.txt`.
+- `version.json` `{version, commit, date, release}` is written next to `index.html`. `version` comes from, in order: `version.txt` (if present; invalid content fails the deploy), the `"."` entry of `.release-please-manifest.json` (bumped by the release PR; a missing or malformed entry is ignored), the nearest reachable `vX.Y.Z` tag, or `0.0.0`. Values are only matched against a strict semver regex, never evaluated.
+- `release` is `true` only when HEAD has an exact `vX.Y.Z` tag (the checkout uses `fetch-depth: 0` and `fetch-tags` so tags are visible). The label is then `vX.Y.Z`; otherwise `vX.Y.Z+<sha7>`, or `dev+<sha7>` when no source gave a version.
 - The label is replaced in `index.html` at deploy time (no script, no extra fetch, CSP unchanged). Version, commit, date and label are validated by regex first; invalid values fail the deploy. A deploy with no tag and no `version.txt` still succeeds.
 
 ## Screenshots
