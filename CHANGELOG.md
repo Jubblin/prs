@@ -11,6 +11,7 @@ All notable changes to this project, grouped by pull request. Format based on [K
 - Text filter input has `autocomplete="off"` so Firefox no longer restores its value on reload (the filter is documented as not persisted)
 
 ### Added
+- WebKit joins the nightly/manual CI matrix (Chromium + Firefox + WebKit); `BROWSER=webkit node tests/run.mjs` runs the checks locally. Pull request and push runs stay Chromium-only
 - Tests can run in Firefox: `BROWSER=firefox node tests/run.mjs` (default `chromium`); nightly and manual CI runs use a Chromium + Firefox matrix, pull request and push runs stay Chromium-only, and a failed nightly still produces a single issue
 - CI workflow (`.github/workflows/tests.yml`) running the mocked end-to-end checks and the `create-pat.sh` checks on every pull request and on push to `main`
 - The tests also run nightly (03:17 UTC, default branch) and on demand; a failed nightly run opens a `Nightly tests failed` issue, or comments on the open one. GitHub disables schedules after 60 days of repository inactivity
