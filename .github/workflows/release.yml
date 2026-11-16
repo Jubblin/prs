@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   release-please:
     # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       issues: write
@@ -33,7 +33,7 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       actions: write
     steps:

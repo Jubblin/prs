@@ -19,7 +19,7 @@ jobs:
   mocked-tests:
     name: mocked-tests (${{ matrix.browser }})
     # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -61,7 +61,7 @@ jobs:
     needs: mocked-tests
     if: ${{ always() && github.event_name == 'schedule' && needs.mocked-tests.result == 'failure' }}
     # Pinned: ubuntu-latest moved to 26.04, where Playwright's apt dependencies fail; revisit when Playwright supports it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       issues: write
